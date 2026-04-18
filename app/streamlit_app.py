@@ -12,7 +12,10 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 
-from analysis.team_stats import load_data, compute_team_aggregates, weakness_scores, season_trend
+from analysis.team_stats import (
+    load_data, compute_team_aggregates, compute_sos_adjusted_aggregates,
+    weakness_scores, season_trend
+)
 from analysis.predictor import train, predict_matchup
 from analysis.scouting import (
     win_condition_fingerprint, how_to_beat, momentum_score, matchup_exploiter
@@ -90,6 +93,21 @@ with st.sidebar:
                 st.error(f"Scrape failed: {e}")
 
     st.markdown("---")
+    sos_on = st.toggle(
+        "Strength-of-Schedule Adjusted",
+        value=False,
+        help=(
+            "Normalizes each team's offensive stats by the defensive quality "
+            "of their opponents. 300 yards against Queen's (top defense) is "
+            "worth more than 300 yards against York (weak defense)."
+        ),
+    )
+    if sos_on:
+        st.caption("SOS adjusted — stats scaled by opponent defensive quality.")
+    else:
+        st.caption("Raw stats — no opponent adjustment.")
+
+    st.markdown("---")
     st.caption("Built for OUA Football analysis. Data: oua.ca")
 
 
@@ -97,11 +115,13 @@ with st.sidebar:
 @st.cache_data
 def get_data():
     games, gamelog, coaches = load_data()
-    agg = compute_team_aggregates(coaches)
-    weak = weakness_scores(agg)
-    return games, gamelog, coaches, agg, weak
+    agg_raw = compute_team_aggregates(coaches)
+    agg_sos = compute_sos_adjusted_aggregates(gamelog, coaches)
+    return games, gamelog, coaches, agg_raw, agg_sos
 
-games, gamelog, coaches, agg, weak = get_data()
+games, gamelog, coaches, agg_raw, agg_sos = get_data()
+agg = agg_sos if sos_on else agg_raw
+weak = weakness_scores(agg)
 teams = sorted(agg["team"].unique().tolist())
 
 tab1, tab2, tab3, tab4, tab5 = st.tabs(
@@ -111,6 +131,7 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs(
 # ── Tab 1: Game Predictor ──────────────────────────────────────────────────────
 with tab1:
     st.subheader("Win Probability Predictor")
+    st.caption(f"Using {'SOS-adjusted' if sos_on else 'raw'} stats — toggle in sidebar to switch.")
     col1, col2 = st.columns(2)
     with col1:
         home = st.selectbox("Home Team", teams, key="home")
@@ -153,7 +174,10 @@ with tab1:
 # ── Tab 2: Team Weaknesses ─────────────────────────────────────────────────────
 with tab2:
     st.subheader("Team Weakness Dashboard")
-    st.caption("Higher rank = weaker in the league for that dimension")
+    if sos_on:
+        st.info("**SOS Adjusted** — offensive rankings account for opponent defensive quality. A team that dominated weak defenses will rank lower here than raw stats suggest.")
+    else:
+        st.caption("Higher rank = weaker in the league for that dimension")
 
     weakness_cols = [c for c in weak.columns if c.startswith("weakness_")]
     display = weak[["team"] + weakness_cols + ["overall_weakness_score"]].sort_values(

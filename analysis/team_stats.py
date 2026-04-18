@@ -68,6 +68,64 @@ def weakness_scores(agg: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def compute_sos_adjusted_aggregates(gamelog: pd.DataFrame, coaches: pd.DataFrame) -> pd.DataFrame:
+    """
+    Adjust each team's per-game offensive stats by the defensive quality of
+    their opponents. Facing a top defense and still gaining 300 yards is worth
+    more than 300 yards against a weak defense.
+
+    adjustment factor = league_avg_yards_allowed / opponent_yards_allowed
+      > 1.0 means opponent had a good defense → your yards are worth more
+      < 1.0 means opponent had a weak defense → your yards are worth less
+    """
+    if gamelog.empty or coaches.empty:
+        return pd.DataFrame()
+
+    # defensive quality: avg total yards allowed per team across seasons
+    def_quality = (
+        coaches.groupby("team")[["def_pass_yds_allowed", "def_rush_yds_allowed"]]
+        .mean()
+        .assign(def_total=lambda d: d["def_pass_yds_allowed"] + d["def_rush_yds_allowed"])
+    )
+    league_avg_pass = def_quality["def_pass_yds_allowed"].mean()
+    league_avg_rush = def_quality["def_rush_yds_allowed"].mean()
+
+    adj = gamelog.copy()
+
+    def adjustment(opponent: str, col: str, league_avg: float) -> float:
+        if opponent not in def_quality.index:
+            return 1.0
+        opp_val = def_quality.loc[opponent, col]
+        if opp_val == 0:
+            return 1.0
+        return league_avg / opp_val
+
+    adj["pass_factor"] = adj["opponent"].apply(lambda o: adjustment(o, "def_pass_yds_allowed", league_avg_pass))
+    adj["rush_factor"] = adj["opponent"].apply(lambda o: adjustment(o, "def_rush_yds_allowed", league_avg_rush))
+    adj["passing_yards"] = adj["passing_yards"] * adj["pass_factor"]
+    adj["rushing_yards"] = adj["rushing_yards"] * adj["rush_factor"]
+
+    # re-aggregate: sum per team (season totals) to match compute_team_aggregates scale
+    num_cols = ["passing_yards", "rushing_yards", "turnovers", "sacks_taken", "penalty_yards"]
+    existing = [c for c in num_cols if c in adj.columns]
+    agg = adj.groupby("team")[existing].sum().reset_index()
+    agg["yards_per_game"] = (agg["passing_yards"] + agg["rushing_yards"]) / 8
+
+    # merge in defensive stats from coaches (defense doesn't get SOS-adjusted here)
+    def_cols = ["team", "def_pass_yds_allowed", "def_rush_yds_allowed",
+                "def_sacks", "def_forced_fumbles", "turnover_margin",
+                "off_pass_yds", "off_rush_yds"]
+    coach_avg = coaches.groupby("team")[[c for c in def_cols[1:] if c in coaches.columns]].mean().reset_index()
+    agg = agg.merge(coach_avg, on="team", how="left")
+
+    agg["yards_allowed_per_game"] = (
+        agg["def_pass_yds_allowed"].fillna(0) + agg["def_rush_yds_allowed"].fillna(0)
+    ) / 8
+    agg["passing_yards_allowed"] = agg["def_pass_yds_allowed"].fillna(0)
+    agg["rushing_yards_allowed"] = agg["def_rush_yds_allowed"].fillna(0)
+    return agg
+
+
 def season_trend(gamelog: pd.DataFrame, team: str) -> pd.DataFrame:
     team_games = gamelog[gamelog["team"] == team].copy().reset_index(drop=True)
     team_games["game_num"] = range(1, len(team_games) + 1)
