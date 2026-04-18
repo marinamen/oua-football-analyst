@@ -3,6 +3,7 @@ OUA Football Analyst — Streamlit app
 Run with: streamlit run streamlit_app.py
 """
 
+from pathlib import Path
 import streamlit as st
 import pandas as pd
 import plotly.express as px
