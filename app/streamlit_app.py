@@ -105,7 +105,7 @@ games, gamelog, coaches, agg, weak = get_data()
 teams = sorted(agg["team"].unique().tolist())
 
 tab1, tab2, tab3, tab4, tab5 = st.tabs(
-    ["🔮 Game Predictor", "⚠️ Team Weaknesses", "📈 Season Trends", "🎯 Scouting Report", "📋 Raw Stats"]
+    ["Game Predictor", "Team Weaknesses", "Season Trends", "Scouting Report", "Raw Stats"]
 )
 
 # ── Tab 1: Game Predictor ──────────────────────────────────────────────────────
