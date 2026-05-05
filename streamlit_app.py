@@ -15,10 +15,22 @@ from analysis.team_stats import (
     weakness_scores, season_trend
 )
 from analysis.play_analysis import (
-    load_play_file, apply_filters,
-    run_pass_split, tendency_by_down_distance, formation_tendency,
-    personnel_tendency, direction_tendency, avg_gain_by_situation,
-    redzone_tendencies, motion_tendency, normalize_columns, derive_buckets,
+    load_play_file, apply_filters, normalize_columns, derive_buckets,
+    # overview
+    run_pass_split, tendency_by_down_distance,
+    # run game
+    formation_tendency, personnel_tendency,
+    direction_tendency, direction_by_personnel,
+    hash_tendency, run_success_rate,
+    avg_gain_by_situation,
+    # pass game
+    pass_depth_by_situation, play_action_tendency,
+    completion_rate_by_depth, pass_success_by_depth,
+    # situational
+    redzone_tendencies, redzone_tendencies_detail,
+    motion_tendency, third_down_breakdown, situation_tendency,
+    # efficiency
+    success_rate_by_group, yards_per_play_by_situation, explosive_plays,
 )
 from analysis.predictor import train, predict_matchup
 from analysis.scouting import (
@@ -393,10 +405,14 @@ with tab4:
 # Tab 5 — Opponent Play Tendencies
 # ══════════════════════════════════════════════════════════════════════════════
 with tab5:
-    st.subheader(f"{opponent} — Play Tendencies")
-    st.caption(f"Upload {opponent}'s tagged play-by-play so Toronto's defence knows what's coming")
+    st.subheader(f"{opponent} — Offensive Tendencies")
+    st.caption(
+        f"Upload {opponent}'s tagged play-by-play to give Toronto's defence a schematic edge. "
+        "Organised the way a coordinator thinks: Run Game → Pass Game → Situational → Efficiency."
+    )
 
-    TEMPLATE_PATH = Path(__file__).parent / "data" / "manual" / "play_template.xlsx"
+    TEMPLATE_PATH  = Path(__file__).parent / "data" / "manual" / "play_template.xlsx"
+    FAKE_DATA_PATH = Path(__file__).parent / "data" / "manual" / "queens_plays_3games.xlsx"
 
     col_up, col_dl = st.columns([3, 1])
     with col_up:
@@ -409,7 +425,7 @@ with tab5:
         if TEMPLATE_PATH.exists():
             with open(TEMPLATE_PATH, "rb") as f:
                 st.download_button(
-                    "Download Template",
+                    "⬇ Download Template",
                     f.read(),
                     file_name="play_template.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -419,23 +435,28 @@ with tab5:
     if uploaded:
         try:
             play_df = load_play_file(uploaded)
-            st.success(f"Loaded {len(play_df)} plays from {opponent}.")
+            st.success(f"✅ Loaded {len(play_df)} plays from {opponent}.")
         except Exception as e:
             st.error(f"Could not read file: {e}")
-    elif TEMPLATE_PATH.exists():
+    elif FAKE_DATA_PATH.exists():
         import openpyxl  # noqa
-        _raw = pd.read_excel(TEMPLATE_PATH)
+        _raw = pd.read_excel(FAKE_DATA_PATH)
         play_df = derive_buckets(normalize_columns(_raw))
-        st.info(f"Showing sample data — upload {opponent}'s actual file above.")
+        st.info(
+            f"📊 Showing **Queen's sample data** (3 games, {len(play_df)} plays) — "
+            f"upload {opponent}'s actual file above to replace it."
+        )
 
     if play_df is not None and not play_df.empty:
+
+        # ── Sidebar filters ────────────────────────────────────────────────────
         with st.sidebar:
             st.markdown("---")
-            st.markdown(f"**{opponent} Play Filters**")
+            st.markdown(f"**Play Filters**")
             f_down = st.selectbox("Down", ["All", 1, 2, 3, 4], key="pb_down")
             f_dist = st.selectbox("Distance", ["All", "Short (1-2)", "Medium (3-6)", "Long (7+)"], key="pb_dist")
             f_zone = st.selectbox("Field Zone", ["All"] + (
-                play_df["field_zone"].dropna().unique().tolist() if "field_zone" in play_df.columns else []
+                [str(z) for z in play_df["field_zone"].dropna().unique()] if "field_zone" in play_df.columns else []
             ), key="pb_zone")
             f_form = st.selectbox("Formation", ["All"] + (
                 sorted(play_df["formation"].dropna().unique().tolist()) if "formation" in play_df.columns else []
@@ -444,116 +465,450 @@ with tab5:
                 sorted(play_df["personnel"].dropna().unique().tolist()) if "personnel" in play_df.columns else []
             ), key="pb_pers")
             f_qtr  = st.selectbox("Quarter", ["All", 1, 2, 3, 4], key="pb_qtr")
+            f_sit  = st.selectbox("Game Situation", ["All"] + (
+                sorted(play_df["game_situation"].dropna().unique().tolist()) if "game_situation" in play_df.columns else []
+            ), key="pb_sit")
 
         filtered = apply_filters(play_df, {k: v for k, v in {
-            "down": None if f_down == "All" else f_down,
-            "dist_bucket": None if f_dist == "All" else f_dist,
-            "field_zone": None if f_zone == "All" else f_zone,
-            "formation": None if f_form == "All" else f_form,
-            "personnel": None if f_pers == "All" else f_pers,
-            "quarter": None if f_qtr == "All" else f_qtr,
+            "down":           None if f_down == "All" else f_down,
+            "dist_bucket":    None if f_dist == "All" else f_dist,
+            "field_zone":     None if f_zone == "All" else f_zone,
+            "formation":      None if f_form == "All" else f_form,
+            "personnel":      None if f_pers == "All" else f_pers,
+            "quarter":        None if f_qtr  == "All" else f_qtr,
+            "game_situation": None if f_sit  == "All" else f_sit,
         }.items() if v})
 
-        st.markdown(f"**{len(filtered)} plays** match current filters")
+        # ── Overview header ────────────────────────────────────────────────────
+        ov1, ov2, ov3 = st.columns(3)
+        split = run_pass_split(filtered)
+        run_pct  = split.get("Run", 0)
+        pass_pct = split.get("Pass", 0)
+        ov1.metric("Total Plays (filtered)", len(filtered))
+        ov2.metric("Run %", f"{run_pct:.1f}%")
+        ov3.metric("Pass %", f"{pass_pct:.1f}%")
 
-        r1c1, r1c2 = st.columns(2)
-        with r1c1:
-            st.markdown(f"#### {opponent} Run / Pass Split")
-            split = run_pass_split(filtered)
+        # ── Overview: Run/Pass + Down/Distance heatmap ─────────────────────────
+        ov_c1, ov_c2 = st.columns(2)
+        with ov_c1:
             if not split.empty:
-                fig = px.pie(values=split.values, names=split.index, hole=0.4,
-                             color=split.index,
-                             color_discrete_map={"Run": UFT_RED, "Pass": "#555555"})
-                fig.update_traces(texttemplate="%{label}<br>%{value:.1f}%")
-                fig.update_layout(showlegend=False, margin=dict(t=10, b=10))
-                st.plotly_chart(fig, use_container_width=True)
-
-        with r1c2:
-            st.markdown("#### Run % by Down & Distance")
+                fig_split = px.pie(
+                    values=split.values, names=split.index, hole=0.45,
+                    color=split.index,
+                    color_discrete_map={"Run": UFT_RED, "Pass": UFT_BLUE, "Play Action Pass": "#7B3F9E"},
+                    title="Overall Run / Pass Split",
+                )
+                fig_split.update_traces(texttemplate="%{label}<br>%{value:.1f}%")
+                fig_split.update_layout(showlegend=False, margin=dict(t=40, b=10))
+                st.plotly_chart(fig_split, use_container_width=True)
+        with ov_c2:
             dd = tendency_by_down_distance(filtered)
             if not dd.empty:
                 run_dd = dd[dd["play_category"] == "Run"].pivot_table(
                     index="down", columns="dist_bucket", values="pct", aggfunc="first"
                 ).fillna(0)
-                fig2 = px.imshow(run_dd, text_auto=".0f",
-                                 color_continuous_scale=["white", UFT_RED],
-                                 labels={"color": "Run %"},
-                                 title="Darker = more likely to run")
-                st.plotly_chart(fig2, use_container_width=True)
+                fig_dd = px.imshow(
+                    run_dd, text_auto=".0f",
+                    color_continuous_scale=["white", UFT_RED],
+                    labels={"color": "Run %"},
+                    title="Run % by Down × Distance — darker = more likely to run",
+                )
+                fig_dd.update_layout(margin=dict(t=40, b=10))
+                st.plotly_chart(fig_dd, use_container_width=True)
 
-        r2c1, r2c2 = st.columns(2)
-        with r2c1:
-            st.markdown("#### Formation Tendencies")
-            ft = formation_tendency(filtered)
-            if not ft.empty:
-                fig3 = px.bar(ft, x="formation", y="pct", color="play_category",
-                              barmode="stack",
-                              color_discrete_map={"Run": UFT_RED, "Pass": "#555555"},
-                              labels={"pct": "% of plays", "formation": "", "play_category": ""})
-                fig3.update_layout(margin=dict(t=10, b=10), legend=dict(orientation="h"))
-                st.plotly_chart(fig3, use_container_width=True)
+        st.markdown("---")
 
-        with r2c2:
-            st.markdown("#### Personnel Tendencies")
-            pt = personnel_tendency(filtered)
-            if not pt.empty:
-                fig4 = px.bar(pt, x="personnel", y="pct", color="play_category",
-                              barmode="stack",
-                              color_discrete_map={"Run": UFT_RED, "Pass": "#555555"},
-                              labels={"pct": "% of plays", "personnel": "", "play_category": ""})
-                fig4.update_layout(margin=dict(t=10, b=10), legend=dict(orientation="h"),
-                                   xaxis_tickangle=20)
-                st.plotly_chart(fig4, use_container_width=True)
+        # ══════════════════════════════════════════════════════════════════════
+        # SECTION 1: RUN GAME
+        # ══════════════════════════════════════════════════════════════════════
+        with st.expander("🏃 Run Game", expanded=True):
+            rg1, rg2 = st.columns(2)
 
-        r3c1, r3c2 = st.columns(2)
-        with r3c1:
-            st.markdown("#### Run Direction")
-            dt = direction_tendency(filtered)
-            if not dt.empty:
-                fig5 = px.bar(dt, x="direction", y="pct",
-                              color_discrete_sequence=[UFT_RED],
-                              labels={"pct": "% of runs", "direction": ""})
-                st.plotly_chart(fig5, use_container_width=True)
-            else:
-                st.info("No direction data — add a Direction column to the upload.")
+            with rg1:
+                st.markdown("##### Run Direction")
+                dt = direction_tendency(filtered)
+                if not dt.empty:
+                    fig_dir = px.bar(
+                        dt, x="direction", y="pct",
+                        color_discrete_sequence=[UFT_RED],
+                        labels={"pct": "% of runs", "direction": ""},
+                        title="Where do they prefer to run?",
+                    )
+                    fig_dir.update_layout(margin=dict(t=40, b=10))
+                    st.plotly_chart(fig_dir, use_container_width=True)
+                else:
+                    st.info("Add a Direction column to see run direction breakdown.")
 
-        with r3c2:
-            st.markdown("#### Avg Gain by Formation")
-            ag = avg_gain_by_situation(filtered, "formation")
-            if not ag.empty:
-                fig6 = px.bar(ag, x="formation", y="avg_gain", text="plays",
-                              color_discrete_sequence=[UFT_BLUE],
-                              labels={"avg_gain": "Avg Yards", "formation": ""})
-                fig6.update_traces(texttemplate="%{text} plays", textposition="outside")
-                st.plotly_chart(fig6, use_container_width=True)
+            with rg2:
+                st.markdown("##### Run Success Rate by Direction")
+                rsr = run_success_rate(filtered)
+                if not rsr.empty:
+                    fig_rsr = px.bar(
+                        rsr, x="direction", y="success_rate", text="plays",
+                        color_discrete_sequence=[UFT_BLUE],
+                        labels={"success_rate": "Success %", "direction": ""},
+                        title="Success % per run gap — where to stack the box",
+                    )
+                    fig_rsr.update_traces(texttemplate="%{text} plays", textposition="outside")
+                    fig_rsr.update_layout(margin=dict(t=40, b=10))
+                    st.plotly_chart(fig_rsr, use_container_width=True)
+                else:
+                    st.info("Need Gain + Down + Distance columns for success rate.")
 
-        r4c1, r4c2 = st.columns(2)
-        with r4c1:
-            st.markdown("#### Red Zone Tendencies")
-            rz = redzone_tendencies(play_df)
-            if not rz.empty:
-                fig7 = px.pie(rz, values="pct", names="play_type", hole=0.4,
-                              color_discrete_map={"Run": UFT_RED, "Pass": "#555555"})
-                fig7.update_traces(texttemplate="%{label}<br>%{value:.1f}%")
-                fig7.update_layout(showlegend=False, margin=dict(t=10, b=10))
-                st.plotly_chart(fig7, use_container_width=True)
-            else:
-                st.info("Add a Yard_Line column for red zone analysis.")
+            rg3, rg4 = st.columns(2)
 
-        with r4c2:
-            st.markdown("#### Pre-Snap Motion Impact")
+            with rg3:
+                st.markdown("##### Run Direction by Personnel")
+                st.caption("Which gap does each personnel package attack?")
+                dbp = direction_by_personnel(filtered)
+                if not dbp.empty:
+                    fig_dbp = px.bar(
+                        dbp, x="personnel", y="pct", color="direction",
+                        barmode="stack",
+                        labels={"pct": "% of runs", "personnel": "", "direction": "Direction"},
+                        title="Run direction by personnel group",
+                    )
+                    fig_dbp.update_layout(
+                        margin=dict(t=40, b=10), legend=dict(orientation="h"),
+                        xaxis_tickangle=15,
+                    )
+                    st.plotly_chart(fig_dbp, use_container_width=True)
+                else:
+                    st.info("Need Direction + Personnel columns.")
+
+            with rg4:
+                st.markdown("##### Hash Mark Tendencies")
+                st.caption("Does hash position change their run/pass ratio?")
+                ht = hash_tendency(filtered)
+                if not ht.empty:
+                    fig_ht = px.bar(
+                        ht, x="hash", y="pct", color="play_category",
+                        barmode="group",
+                        color_discrete_map={"Run": UFT_RED, "Pass": UFT_BLUE},
+                        labels={"pct": "% of plays", "hash": "Hash", "play_category": ""},
+                        title="Run vs Pass by hash mark",
+                    )
+                    fig_ht.update_layout(margin=dict(t=40, b=10), legend=dict(orientation="h"))
+                    st.plotly_chart(fig_ht, use_container_width=True)
+                else:
+                    st.info("Add a Hash column (Left / Middle / Right).")
+
+            rg5, rg6 = st.columns(2)
+
+            with rg5:
+                st.markdown("##### Formation Tendencies")
+                ft = formation_tendency(filtered)
+                if not ft.empty:
+                    fig_ft = px.bar(
+                        ft, x="formation", y="pct", color="play_category",
+                        barmode="stack",
+                        color_discrete_map={"Run": UFT_RED, "Pass": UFT_BLUE},
+                        labels={"pct": "% of plays", "formation": "", "play_category": ""},
+                        title="Run/Pass % by formation",
+                    )
+                    fig_ft.update_layout(margin=dict(t=40, b=10), legend=dict(orientation="h"))
+                    st.plotly_chart(fig_ft, use_container_width=True)
+
+            with rg6:
+                st.markdown("##### Personnel Tendencies")
+                pte = personnel_tendency(filtered)
+                if not pte.empty:
+                    fig_pte = px.bar(
+                        pte, x="personnel", y="pct", color="play_category",
+                        barmode="stack",
+                        color_discrete_map={"Run": UFT_RED, "Pass": UFT_BLUE},
+                        labels={"pct": "% of plays", "personnel": "", "play_category": ""},
+                        title="Run/Pass % by personnel package",
+                    )
+                    fig_pte.update_layout(
+                        margin=dict(t=40, b=10), legend=dict(orientation="h"),
+                        xaxis_tickangle=15,
+                    )
+                    st.plotly_chart(fig_pte, use_container_width=True)
+
+        # ══════════════════════════════════════════════════════════════════════
+        # SECTION 2: PASS GAME
+        # ══════════════════════════════════════════════════════════════════════
+        with st.expander("🎯 Pass Game", expanded=True):
+            pg1, pg2 = st.columns(2)
+
+            with pg1:
+                st.markdown("##### Pass Depth by Down & Distance")
+                st.caption("Short / Intermediate / Deep — what they target on each down")
+                pdbs = pass_depth_by_situation(filtered)
+                if not pdbs.empty and "down" in pdbs.columns:
+                    # summarise to down × pass_depth
+                    summ = filtered[filtered["play_category"] == "Pass"].copy()
+                    if "pass_depth" in summ.columns and "down" in summ.columns:
+                        grp = summ.groupby(["down", "pass_depth"]).size().reset_index(name="count")
+                        total = grp.groupby("down")["count"].transform("sum")
+                        grp["pct"] = (grp["count"] / total * 100).round(1)
+                        fig_pd = px.bar(
+                            grp, x="down", y="pct", color="pass_depth",
+                            barmode="stack",
+                            color_discrete_sequence=[UFT_BLUE, "#005BAC", "#88B0D8"],
+                            labels={"pct": "% of passes", "down": "Down", "pass_depth": "Depth"},
+                            title="Pass depth by down — Short / Intermediate / Deep",
+                        )
+                        fig_pd.update_layout(margin=dict(t=40, b=10), legend=dict(orientation="h"))
+                        st.plotly_chart(fig_pd, use_container_width=True)
+                elif not pdbs.empty:
+                    fig_pd2 = px.bar(
+                        pdbs, x="pass_depth", y="pct",
+                        color_discrete_sequence=[UFT_BLUE],
+                        labels={"pct": "% of passes", "pass_depth": "Depth"},
+                        title="Overall pass depth distribution",
+                    )
+                    st.plotly_chart(fig_pd2, use_container_width=True)
+                else:
+                    st.info("Add a Pass_Depth column (Short / Intermediate / Deep).")
+
+            with pg2:
+                st.markdown("##### Completion Rate by Pass Depth")
+                st.caption("Where are they efficient? Where can Toronto's secondary sit on routes?")
+                crd = completion_rate_by_depth(filtered)
+                if not crd.empty:
+                    fig_crd = px.bar(
+                        crd, x="pass_depth", y="completion_pct", text="plays",
+                        color_discrete_sequence=[UFT_BLUE],
+                        labels={"completion_pct": "Completion %", "pass_depth": ""},
+                        title="Completion % per depth zone",
+                    )
+                    fig_crd.update_traces(texttemplate="%{text} att", textposition="outside")
+                    fig_crd.update_layout(margin=dict(t=40, b=10))
+                    st.plotly_chart(fig_crd, use_container_width=True)
+                else:
+                    st.info("Need Pass_Depth + Result columns.")
+
+            pg3, pg4 = st.columns(2)
+
+            with pg3:
+                st.markdown("##### Play Action Usage")
+                st.caption("When do they fake the handoff? Critical for linebacker keys.")
+                pat = play_action_tendency(filtered)
+                if not pat.empty:
+                    fig_pa = px.bar(
+                        pat, x="down", y="play_action_pct", text="plays",
+                        color_discrete_sequence=["#7B3F9E"],
+                        labels={"play_action_pct": "Play Action %", "down": "Down"},
+                        title="Play action rate by down — fake-heavy = run-first tendency",
+                    )
+                    fig_pa.update_traces(texttemplate="%{text} pass plays", textposition="outside")
+                    fig_pa.update_layout(margin=dict(t=40, b=10))
+                    st.plotly_chart(fig_pa, use_container_width=True)
+                else:
+                    st.info("Tag Play_Type as 'Play Action Pass' to track play action.")
+
+            with pg4:
+                st.markdown("##### Pass Success Rate by Depth")
+                st.caption("Which depth wins first downs? Tells you where to double.")
+                psd = pass_success_by_depth(filtered)
+                if not psd.empty:
+                    fig_psd = px.bar(
+                        psd, x="pass_depth", y="success_rate", text="plays",
+                        color_discrete_sequence=[UFT_BLUE],
+                        labels={"success_rate": "Success %", "pass_depth": ""},
+                        title="Pass success rate by depth zone",
+                    )
+                    fig_psd.update_traces(texttemplate="%{text} plays", textposition="outside")
+                    fig_psd.update_layout(margin=dict(t=40, b=10))
+                    st.plotly_chart(fig_psd, use_container_width=True)
+                else:
+                    st.info("Need Pass_Depth + Gain + Down + Distance columns.")
+
+            st.markdown("##### Pre-Snap Motion Impact on Pass")
             mt = motion_tendency(filtered)
             if not mt.empty:
-                fig8 = px.bar(mt, x="motion", y="pct", color="play_category",
-                              barmode="group",
-                              color_discrete_map={"Run": UFT_RED, "Pass": "#555555"},
-                              labels={"pct": "% of plays", "motion": "", "play_category": ""})
-                fig8.update_layout(margin=dict(t=10, b=10), legend=dict(orientation="h"))
-                st.plotly_chart(fig8, use_container_width=True)
-            else:
-                st.info("Add a Motion column for motion analysis.")
+                fig_mt = px.bar(
+                    mt, x="motion", y="pct", color="play_category",
+                    barmode="group",
+                    color_discrete_map={"Run": UFT_RED, "Pass": UFT_BLUE},
+                    labels={"pct": "% of plays", "motion": "", "play_category": ""},
+                    title="Does motion tip run or pass? — defenders should key on motion frequency",
+                )
+                fig_mt.update_layout(margin=dict(t=40, b=10), legend=dict(orientation="h"))
+                st.plotly_chart(fig_mt, use_container_width=True)
 
-        with st.expander("View full play log"):
+        # ══════════════════════════════════════════════════════════════════════
+        # SECTION 3: SITUATIONAL
+        # ══════════════════════════════════════════════════════════════════════
+        with st.expander("🎲 Situational", expanded=True):
+            sit1, sit2 = st.columns(2)
+
+            with sit1:
+                st.markdown("##### 3rd Down Breakdown")
+                st.caption("Conversion rate and run/pass split by distance — critical for goal-line and prevent packages")
+                tdb = third_down_breakdown(filtered)
+                if not tdb.empty:
+                    fig_3d = px.bar(
+                        tdb, x="dist_bucket", y=["run_pct", "pass_pct"],
+                        barmode="group",
+                        color_discrete_map={"run_pct": UFT_RED, "pass_pct": UFT_BLUE},
+                        labels={"value": "% of 3rd downs", "dist_bucket": "Distance", "variable": ""},
+                        title="3rd down play type by distance",
+                    )
+                    fig_3d.update_layout(margin=dict(t=40, b=10), legend=dict(orientation="h"))
+                    st.plotly_chart(fig_3d, use_container_width=True)
+
+                    # conversion rate table
+                    tdb_disp = tdb.rename(columns={
+                        "dist_bucket": "Distance", "plays": "Plays",
+                        "run_pct": "Run %", "pass_pct": "Pass %",
+                        "conversion_rate": "Conversion %",
+                    })
+                    st.dataframe(tdb_disp, use_container_width=True, hide_index=True)
+                else:
+                    st.info("Need Down + Distance + Result columns for 3rd down breakdown.")
+
+            with sit2:
+                st.markdown("##### Red Zone Tendencies")
+                st.caption("Inside the 10-yard line — goal-line personnel and tendencies")
+                rzd = redzone_tendencies_detail(play_df)
+                if not rzd.empty:
+                    fig_rz = px.bar(
+                        rzd, x="play_type", y="pct",
+                        color="play_type",
+                        color_discrete_map={"Run": UFT_RED, "Pass": UFT_BLUE},
+                        text="plays",
+                        labels={"pct": "% of red zone plays", "play_type": ""},
+                        title="Red zone run vs pass",
+                    )
+                    fig_rz.update_traces(texttemplate="%{text} plays", textposition="outside")
+                    fig_rz.update_layout(showlegend=False, margin=dict(t=40, b=10))
+                    st.plotly_chart(fig_rz, use_container_width=True)
+
+                    # formation/personnel table
+                    rzd_disp = rzd[["play_type", "plays", "pct", "top_formation", "top_personnel", "success_rate"]].rename(columns={
+                        "play_type": "Play", "plays": "Plays", "pct": "%",
+                        "top_formation": "Top Formation", "top_personnel": "Top Personnel",
+                        "success_rate": "Success %",
+                    })
+                    st.dataframe(rzd_disp, use_container_width=True, hide_index=True)
+                else:
+                    st.info("Add a Yard_Line column for red zone analysis.")
+
+            st.markdown("##### Game Situation — How Play-Calling Shifts")
+            st.caption("Leading teams run more. Trailing teams throw more. Does this opponent follow the pattern?")
+            situ = situation_tendency(play_df)
+            if not situ.empty:
+                fig_sit = px.bar(
+                    situ, x="game_situation", y="pct", color="play_category",
+                    barmode="group",
+                    color_discrete_map={"Run": UFT_RED, "Pass": UFT_BLUE},
+                    labels={"pct": "% of plays", "game_situation": "Situation", "play_category": ""},
+                    title="Run vs Pass by game situation — Leading / Close / Trailing",
+                    category_orders={"game_situation": ["Leading", "Close", "Trailing"]},
+                )
+                fig_sit.update_layout(margin=dict(t=40, b=10), legend=dict(orientation="h"))
+                st.plotly_chart(fig_sit, use_container_width=True)
+            else:
+                st.info("Add a Game_Situation column (Leading / Close / Trailing) to unlock situational analysis.")
+
+        # ══════════════════════════════════════════════════════════════════════
+        # SECTION 4: EFFICIENCY
+        # ══════════════════════════════════════════════════════════════════════
+        with st.expander("📊 Efficiency", expanded=True):
+            ef1, ef2 = st.columns(2)
+
+            with ef1:
+                st.markdown("##### Success Rate by Formation")
+                st.caption("Which formation actually moves the chains?")
+                srf = success_rate_by_group(filtered, "formation")
+                if not srf.empty:
+                    fig_srf = px.bar(
+                        srf, x="formation", y="success_rate", text="plays",
+                        color_discrete_sequence=[UFT_BLUE],
+                        labels={"success_rate": "Success %", "formation": ""},
+                        title="Formation success rate — meet industry standard thresholds",
+                    )
+                    fig_srf.update_traces(texttemplate="%{text} plays", textposition="outside")
+                    fig_srf.add_hline(y=50, line_dash="dash", line_color="gray",
+                                      annotation_text="50% benchmark")
+                    fig_srf.update_layout(margin=dict(t=40, b=10))
+                    st.plotly_chart(fig_srf, use_container_width=True)
+                else:
+                    st.info("Need Gain + Down + Distance + Formation columns.")
+
+            with ef2:
+                st.markdown("##### Success Rate by Personnel")
+                st.caption("Which package is their most dangerous — and where to focus coverage")
+                srp = success_rate_by_group(filtered, "personnel")
+                if not srp.empty:
+                    fig_srp = px.bar(
+                        srp, x="personnel", y="success_rate", text="plays",
+                        color_discrete_sequence=[UFT_BLUE],
+                        labels={"success_rate": "Success %", "personnel": ""},
+                        title="Personnel group success rate",
+                    )
+                    fig_srp.update_traces(texttemplate="%{text} plays", textposition="outside")
+                    fig_srp.add_hline(y=50, line_dash="dash", line_color="gray",
+                                      annotation_text="50% benchmark")
+                    fig_srp.update_layout(margin=dict(t=40, b=10), xaxis_tickangle=15)
+                    st.plotly_chart(fig_srp, use_container_width=True)
+                else:
+                    st.info("Need Gain + Down + Distance + Personnel columns.")
+
+            ef3, ef4 = st.columns(2)
+
+            with ef3:
+                st.markdown("##### Avg Gain by Formation")
+                ag = avg_gain_by_situation(filtered, "formation")
+                if not ag.empty:
+                    fig_ag = px.bar(
+                        ag, x="formation", y="avg_gain", text="plays",
+                        color_discrete_sequence=[UFT_RED],
+                        labels={"avg_gain": "Avg Yards/Play", "formation": ""},
+                        title="Yards per play — which set gains the most?",
+                    )
+                    fig_ag.update_traces(texttemplate="%{text} plays", textposition="outside")
+                    fig_ag.update_layout(margin=dict(t=40, b=10))
+                    st.plotly_chart(fig_ag, use_container_width=True)
+
+            with ef4:
+                st.markdown("##### Explosive Plays")
+                st.caption("Runs ≥10 yds or passes ≥20 yds — where do chunk plays come from?")
+                exp = explosive_plays(filtered)
+                if not exp.empty:
+                    fig_exp = px.bar(
+                        exp, x="play_type", y="count",
+                        color="play_type",
+                        color_discrete_map={"Run": UFT_RED, "Pass": UFT_BLUE},
+                        text="avg_gain",
+                        labels={"count": "# Explosive Plays", "play_type": ""},
+                        title="Explosive play count and avg gain",
+                    )
+                    fig_exp.update_traces(texttemplate="avg %{text} yds", textposition="outside")
+                    fig_exp.update_layout(showlegend=False, margin=dict(t=40, b=10))
+                    st.plotly_chart(fig_exp, use_container_width=True)
+
+                    # detail table
+                    exp_disp = exp.rename(columns={
+                        "play_type": "Type", "count": "Plays", "avg_gain": "Avg Gain",
+                        "top_formation": "Top Formation", "top_direction": "Top Dir / Depth",
+                    })
+                    st.dataframe(exp_disp, use_container_width=True, hide_index=True)
+                else:
+                    st.info("Not enough data or no chunk plays in filtered sample.")
+
+            st.markdown("##### Yards Per Play by Down × Distance × Play Type")
+            ypp = yards_per_play_by_situation(filtered)
+            if not ypp.empty and len(ypp) > 1:
+                fig_ypp = px.bar(
+                    ypp, x="avg_gain", y=ypp.apply(
+                        lambda r: f"D{int(r['down']) if 'down' in ypp.columns else ''} "
+                                  f"{r.get('dist_bucket','')} "
+                                  f"({r.get('play_category','')})", axis=1
+                    ) if "down" in ypp.columns else ypp.index,
+                    color="play_category" if "play_category" in ypp.columns else None,
+                    color_discrete_map={"Run": UFT_RED, "Pass": UFT_BLUE},
+                    orientation="h",
+                    labels={"x": "Avg Yards/Play", "y": "Situation"},
+                    title="Yards per play across all down/distance/type combos",
+                )
+                fig_ypp.update_layout(margin=dict(t=40, b=10), legend=dict(orientation="h"))
+                st.plotly_chart(fig_ypp, use_container_width=True)
+
+        with st.expander("📋 Full Play Log"):
             st.dataframe(filtered, use_container_width=True)
 
 
