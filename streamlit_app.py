@@ -5,13 +5,13 @@ Run with: streamlit run streamlit_app.py
 """
 
 from pathlib import Path
+import hashlib
+import hmac
+import time
 import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-import streamlit_authenticator as stauth
-import yaml
-from yaml.loader import SafeLoader
 
 from analysis.team_stats import (
     load_data, compute_team_aggregates, compute_sos_adjusted_aggregates,
@@ -50,59 +50,78 @@ st.set_page_config(
     layout="wide",
 )
 
-# ── Authentication ─────────────────────────────────────────────────────────────
-def _build_authenticator():
-    """Build the authenticator from st.secrets (Streamlit Cloud) or local secrets.toml."""
+# ── Authentication — zero external dependencies ────────────────────────────────
+def _secrets_configured() -> bool:
     try:
-        creds = dict(st.secrets["credentials"])
-        # st.secrets nests usernames under credentials.usernames
-        credentials = {
-            "usernames": {
-                uname: dict(info)
-                for uname, info in creds["usernames"].items()
-            }
-        }
-        cookie = dict(st.secrets["cookie"])
+        return "auth" in st.secrets and "users" in st.secrets
     except Exception:
-        # fallback: no secrets configured → open access (dev mode)
-        return None, None
+        return False
 
-    authenticator = stauth.Authenticate(
-        credentials,
-        cookie["name"],
-        cookie["key"],
-        cookie["expiry_days"],
+def _hash_password(salt: str, password: str) -> str:
+    return hashlib.sha256(f"{salt}{password}".encode()).hexdigest()
+
+def _check_credentials(username: str, password: str) -> str | None:
+    """Return display name on success, None on failure."""
+    try:
+        salt  = st.secrets["auth"]["salt"]
+        users = st.secrets["users"]
+        if username not in users:
+            return None
+        stored = users[username]["password"]
+        computed = _hash_password(salt, password)
+        if hmac.compare_digest(computed, stored):
+            return users[username]["name"]
+        return None
+    except Exception:
+        return None
+
+def _show_login_wall():
+    st.markdown(
+        "<h2 style='text-align:center;margin-top:3rem'>🏈 Varsity Blues Football Analytics</h2>"
+        "<p style='text-align:center;color:#888'>University of Toronto — staff access only</p>",
+        unsafe_allow_html=True,
     )
-    return authenticator, credentials
+    col = st.columns([1, 1.2, 1])[1]
+    with col:
+        with st.form("login_form"):
+            username = st.text_input("Username", placeholder="e.g. rlyn")
+            password = st.text_input("Password", type="password")
+            submitted = st.form_submit_button("Sign in", use_container_width=True, type="primary")
 
-authenticator, _credentials = _build_authenticator()
+        if submitted:
+            name = _check_credentials(username.strip().lower(), password)
+            if name:
+                st.session_state["auth_user"]    = username.strip().lower()
+                st.session_state["auth_name"]    = name
+                st.session_state["auth_time"]    = time.time()
+                st.rerun()
+            else:
+                st.error("Incorrect username or password.")
 
-if authenticator is not None:
-    name, authentication_status, username = authenticator.login(
-        location="main",
-        fields={
-            "Form name": "🏈 Varsity Blues Football Analytics",
-            "Username": "Username",
-            "Password": "Password",
-            "Login": "Sign in",
-        },
+SESSION_EXPIRY = 60 * 60 * 24 * 7  # 7 days
+
+if _secrets_configured():
+    # check existing session
+    logged_in = (
+        "auth_user" in st.session_state
+        and time.time() - st.session_state.get("auth_time", 0) < SESSION_EXPIRY
     )
-
-    if authentication_status is False:
-        st.error("Incorrect username or password. Contact your analyst for access.")
+    if not logged_in:
+        _show_login_wall()
         st.stop()
 
-    if authentication_status is None:
-        st.info("Enter your credentials to access the Varsity Blues analytics platform.")
-        st.stop()
+    auth_name = st.session_state["auth_name"]
 
-    # ── Authenticated — show logout in sidebar ─────────────────────────────────
+    # logout button lives at top of sidebar
     with st.sidebar:
-        st.markdown(f"👤 **{name}**")
-        authenticator.logout("Sign out", location="sidebar")
+        st.markdown(f"👤 **{auth_name}**")
+        if st.button("Sign out", key="logout"):
+            for k in ("auth_user", "auth_name", "auth_time"):
+                st.session_state.pop(k, None)
+            st.rerun()
         st.markdown("---")
 else:
-    name = "Dev"  # no secrets configured — dev mode, open access
+    auth_name = "Dev"  # no secrets → open access for local development
 
 st.title("🏈 Varsity Blues Football Analytics")
 st.caption("University of Toronto — internal analysis tool")
@@ -185,7 +204,7 @@ all_teams  = sorted(agg["team"].unique().tolist())
 
 # ── Global opponent selector (used by all UofT tabs) ──────────────────────────
 st.markdown("### Select Upcoming Opponent")
-opponent = st.selectbox("", opponents, label_visibility="collapsed", key="global_opp")
+opponent = st.selectbox("Opponent", opponents, label_visibility="collapsed", key="global_opp")
 st.markdown("---")
 
 # ── Tabs ───────────────────────────────────────────────────────────────────────
