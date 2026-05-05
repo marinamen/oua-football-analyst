@@ -13,6 +13,12 @@ from analysis.team_stats import (
     load_data, compute_team_aggregates, compute_sos_adjusted_aggregates,
     weakness_scores, season_trend
 )
+from analysis.play_analysis import (
+    load_play_file, load_play_csv, apply_filters,
+    run_pass_split, tendency_by_down_distance, formation_tendency,
+    personnel_tendency, direction_tendency, avg_gain_by_situation,
+    redzone_tendencies, motion_tendency,
+)
 from analysis.predictor import train, predict_matchup
 from analysis.scouting import (
     win_condition_fingerprint, how_to_beat, momentum_score, matchup_exploiter
@@ -121,8 +127,8 @@ agg = agg_sos if sos_on else agg_raw
 weak = weakness_scores(agg)
 teams = sorted(agg["team"].unique().tolist())
 
-tab1, tab2, tab3, tab4, tab5 = st.tabs(
-    ["Game Predictor", "Team Weaknesses", "Season Trends", "Scouting Report", "Raw Stats"]
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(
+    ["Game Predictor", "Team Weaknesses", "Season Trends", "Scouting Report", "Play Breakdown", "Raw Stats"]
 )
 
 # ── Tab 1: Game Predictor ──────────────────────────────────────────────────────
@@ -338,8 +344,214 @@ with tab4:
                     st.markdown(f"**Game plan:** {ex['recommendation']}")
 
 
-# ── Tab 5: Raw Stats ───────────────────────────────────────────────────────────
+# ── Tab 5: Play Breakdown ─────────────────────────────────────────────────────
 with tab5:
+    st.subheader("Play-Level Breakdown")
+    st.caption("Upload a tagged play-by-play Excel to see situational tendencies by down, distance, formation, and personnel.")
+
+    TEMPLATE_PATH = Path(__file__).parent / "data" / "manual" / "play_template.xlsx"
+
+    col_up, col_dl = st.columns([3, 1])
+    with col_up:
+        uploaded = st.file_uploader("Upload play-by-play Excel or CSV", type=["xlsx", "xls", "csv"])
+    with col_dl:
+        st.markdown("<br>", unsafe_allow_html=True)
+        if TEMPLATE_PATH.exists():
+            with open(TEMPLATE_PATH, "rb") as f:
+                st.download_button(
+                    "Download Template",
+                    f.read(),
+                    file_name="play_template.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
+
+    # load data — uploaded file or fall back to template
+    play_df = None
+    if uploaded:
+        try:
+            play_df = load_play_file(uploaded)
+            st.success(f"Loaded {len(play_df)} plays.")
+        except Exception as e:
+            st.error(f"Could not read file: {e}")
+    elif TEMPLATE_PATH.exists():
+        play_df = load_play_csv(TEMPLATE_PATH) if str(TEMPLATE_PATH).endswith(".csv") else (
+            lambda: (lambda df: df)(pd.read_excel(TEMPLATE_PATH).pipe(
+                lambda df: df.rename(columns={c: c.strip().lower() for c in df.columns})
+            ))
+        )()
+        # simpler load for template
+        import openpyxl  # noqa
+        _raw = pd.read_excel(TEMPLATE_PATH)
+        from analysis.play_analysis import normalize_columns, derive_buckets
+        play_df = derive_buckets(normalize_columns(_raw))
+        st.info(f"Showing sample data ({len(play_df)} plays). Upload your own file above.")
+
+    if play_df is not None and not play_df.empty:
+
+        # ── Sidebar filters ───────────────────────────────────────────────────
+        with st.sidebar:
+            st.markdown("---")
+            st.markdown("**Play Breakdown Filters**")
+            f_down = st.selectbox("Down", ["All", 1, 2, 3, 4], key="pb_down")
+            f_dist = st.selectbox("Distance", ["All", "Short (1-2)", "Medium (3-6)", "Long (7+)"], key="pb_dist")
+            f_zone = st.selectbox("Field Zone", ["All"] + (
+                play_df["field_zone"].dropna().unique().tolist() if "field_zone" in play_df.columns else []
+            ), key="pb_zone")
+            f_form = st.selectbox("Formation", ["All"] + (
+                sorted(play_df["formation"].dropna().unique().tolist()) if "formation" in play_df.columns else []
+            ), key="pb_form")
+            f_pers = st.selectbox("Personnel", ["All"] + (
+                sorted(play_df["personnel"].dropna().unique().tolist()) if "personnel" in play_df.columns else []
+            ), key="pb_pers")
+            f_qtr = st.selectbox("Quarter", ["All", 1, 2, 3, 4], key="pb_qtr")
+
+        filters = {
+            "down": None if f_down == "All" else f_down,
+            "dist_bucket": None if f_dist == "All" else f_dist,
+            "field_zone": None if f_zone == "All" else f_zone,
+            "formation": None if f_form == "All" else f_form,
+            "personnel": None if f_pers == "All" else f_pers,
+            "quarter": None if f_qtr == "All" else f_qtr,
+        }
+        filtered = apply_filters(play_df, {k: v for k, v in filters.items() if v})
+
+        st.markdown(f"**{len(filtered)} plays** match current filters")
+
+        # ── Row 1: Run/Pass split + Down & Distance heatmap ──────────────────
+        r1c1, r1c2 = st.columns(2)
+
+        with r1c1:
+            st.markdown("#### Run / Pass Split")
+            split = run_pass_split(filtered)
+            if not split.empty:
+                fig = px.pie(
+                    values=split.values,
+                    names=split.index,
+                    color=split.index,
+                    color_discrete_map={"Run": "#003E7E", "Pass": "#C8102E"},
+                    hole=0.4,
+                )
+                fig.update_traces(texttemplate="%{label}<br>%{value:.1f}%")
+                fig.update_layout(showlegend=False, margin=dict(t=10, b=10))
+                st.plotly_chart(fig, use_container_width=True)
+
+        with r1c2:
+            st.markdown("#### Run % by Down & Distance")
+            dd = tendency_by_down_distance(filtered)
+            if not dd.empty:
+                run_dd = dd[dd["play_category"] == "Run"].pivot_table(
+                    index="down", columns="dist_bucket", values="pct", aggfunc="first"
+                ).fillna(0)
+                fig2 = px.imshow(
+                    run_dd,
+                    text_auto=".0f",
+                    color_continuous_scale=["white", "#003E7E"],
+                    labels={"color": "Run %"},
+                    title="Run % (darker = more likely to run)",
+                )
+                fig2.update_layout(margin=dict(t=40, b=10))
+                st.plotly_chart(fig2, use_container_width=True)
+
+        # ── Row 2: Formation + Personnel ──────────────────────────────────────
+        r2c1, r2c2 = st.columns(2)
+
+        with r2c1:
+            st.markdown("#### Formation Tendencies")
+            ft = formation_tendency(filtered)
+            if not ft.empty:
+                fig3 = px.bar(
+                    ft, x="formation", y="pct", color="play_category",
+                    barmode="stack",
+                    color_discrete_map={"Run": "#003E7E", "Pass": "#C8102E"},
+                    labels={"pct": "% of plays", "formation": "", "play_category": ""},
+                )
+                fig3.update_layout(margin=dict(t=10, b=10), legend=dict(orientation="h"))
+                st.plotly_chart(fig3, use_container_width=True)
+
+        with r2c2:
+            st.markdown("#### Personnel Tendencies")
+            pt = personnel_tendency(filtered)
+            if not pt.empty:
+                fig4 = px.bar(
+                    pt, x="personnel", y="pct", color="play_category",
+                    barmode="stack",
+                    color_discrete_map={"Run": "#003E7E", "Pass": "#C8102E"},
+                    labels={"pct": "% of plays", "personnel": "", "play_category": ""},
+                )
+                fig4.update_layout(margin=dict(t=10, b=10), legend=dict(orientation="h"),
+                                   xaxis_tickangle=20)
+                st.plotly_chart(fig4, use_container_width=True)
+
+        # ── Row 3: Run direction + Avg gain ──────────────────────────────────
+        r3c1, r3c2 = st.columns(2)
+
+        with r3c1:
+            st.markdown("#### Run Direction")
+            dt = direction_tendency(filtered)
+            if not dt.empty:
+                fig5 = px.bar(
+                    dt, x="direction", y="pct",
+                    color_discrete_sequence=["#003E7E"],
+                    labels={"pct": "% of runs", "direction": ""},
+                )
+                fig5.update_layout(margin=dict(t=10, b=10))
+                st.plotly_chart(fig5, use_container_width=True)
+            else:
+                st.info("No run direction data in current filter.")
+
+        with r3c2:
+            st.markdown("#### Avg Gain by Formation")
+            ag = avg_gain_by_situation(filtered, "formation")
+            if not ag.empty:
+                fig6 = px.bar(
+                    ag, x="formation", y="avg_gain", text="plays",
+                    color_discrete_sequence=["#C8102E"],
+                    labels={"avg_gain": "Avg Yards", "formation": "", "plays": "# plays"},
+                )
+                fig6.update_traces(texttemplate="%{text} plays", textposition="outside")
+                fig6.update_layout(margin=dict(t=10, b=10))
+                st.plotly_chart(fig6, use_container_width=True)
+
+        # ── Row 4: Red zone + Motion ──────────────────────────────────────────
+        r4c1, r4c2 = st.columns(2)
+
+        with r4c1:
+            st.markdown("#### Red Zone Tendencies")
+            rz = redzone_tendencies(play_df)  # always full dataset for red zone
+            if not rz.empty:
+                fig7 = px.pie(
+                    rz, values="pct", names="play_type",
+                    color_discrete_map={"Run": "#003E7E", "Pass": "#C8102E"},
+                    hole=0.4,
+                )
+                fig7.update_traces(texttemplate="%{label}<br>%{value:.1f}%")
+                fig7.update_layout(showlegend=False, margin=dict(t=10, b=10))
+                st.plotly_chart(fig7, use_container_width=True)
+            else:
+                st.info("No red zone data (need Yard_Line column).")
+
+        with r4c2:
+            st.markdown("#### Pre-Snap Motion Impact")
+            mt = motion_tendency(filtered)
+            if not mt.empty:
+                fig8 = px.bar(
+                    mt, x="motion", y="pct", color="play_category",
+                    barmode="group",
+                    color_discrete_map={"Run": "#003E7E", "Pass": "#C8102E"},
+                    labels={"pct": "% of plays", "motion": "", "play_category": ""},
+                )
+                fig8.update_layout(margin=dict(t=10, b=10), legend=dict(orientation="h"))
+                st.plotly_chart(fig8, use_container_width=True)
+            else:
+                st.info("No motion data in current filter.")
+
+        # ── Raw play log ──────────────────────────────────────────────────────
+        with st.expander("View raw play log"):
+            st.dataframe(filtered, use_container_width=True)
+
+
+# ── Tab 6: Raw Stats ───────────────────────────────────────────────────────────
+with tab6:
     st.subheader("Coaches-View Season Stats (all teams)")
     st.dataframe(coaches, use_container_width=True)
     st.subheader("Aggregated Averages")
