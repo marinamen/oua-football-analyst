@@ -167,9 +167,9 @@ def direction_tendency(df: pd.DataFrame) -> pd.DataFrame:
     runs = df[df["play_category"] == "Run"]
     if runs.empty:
         return pd.DataFrame()
-    return runs["direction"].value_counts(normalize=True).mul(100).round(1).reset_index(
-        names=["direction"]
-    ).rename(columns={"proportion": "pct", "count": "pct"})
+    result = runs["direction"].value_counts(normalize=True).mul(100).round(1).reset_index()
+    result.columns = ["direction", "pct"]
+    return result
 
 
 def avg_gain_by_situation(df: pd.DataFrame, group_col: str) -> pd.DataFrame:
