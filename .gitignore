@@ -4,3 +4,4 @@ __pycache__/
 data/processed/
 *.pkl
 .DS_Store
+.streamlit/secrets.toml

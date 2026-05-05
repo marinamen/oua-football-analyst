@@ -9,6 +9,9 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+import streamlit_authenticator as stauth
+import yaml
+from yaml.loader import SafeLoader
 
 from analysis.team_stats import (
     load_data, compute_team_aggregates, compute_sos_adjusted_aggregates,
@@ -46,6 +49,61 @@ st.set_page_config(
     page_icon="🏈",
     layout="wide",
 )
+
+# ── Authentication ─────────────────────────────────────────────────────────────
+def _build_authenticator():
+    """Build the authenticator from st.secrets (Streamlit Cloud) or local secrets.toml."""
+    try:
+        creds = dict(st.secrets["credentials"])
+        # st.secrets nests usernames under credentials.usernames
+        credentials = {
+            "usernames": {
+                uname: dict(info)
+                for uname, info in creds["usernames"].items()
+            }
+        }
+        cookie = dict(st.secrets["cookie"])
+    except Exception:
+        # fallback: no secrets configured → open access (dev mode)
+        return None, None
+
+    authenticator = stauth.Authenticate(
+        credentials,
+        cookie["name"],
+        cookie["key"],
+        cookie["expiry_days"],
+    )
+    return authenticator, credentials
+
+authenticator, _credentials = _build_authenticator()
+
+if authenticator is not None:
+    name, authentication_status, username = authenticator.login(
+        location="main",
+        fields={
+            "Form name": "🏈 Varsity Blues Football Analytics",
+            "Username": "Username",
+            "Password": "Password",
+            "Login": "Sign in",
+        },
+    )
+
+    if authentication_status is False:
+        st.error("Incorrect username or password. Contact your analyst for access.")
+        st.stop()
+
+    if authentication_status is None:
+        st.info("Enter your credentials to access the Varsity Blues analytics platform.")
+        st.stop()
+
+    # ── Authenticated — show logout in sidebar ─────────────────────────────────
+    with st.sidebar:
+        st.markdown(f"👤 **{name}**")
+        authenticator.logout("Sign out", location="sidebar")
+        st.markdown("---")
+else:
+    name = "Dev"  # no secrets configured — dev mode, open access
+
 st.title("🏈 Varsity Blues Football Analytics")
 st.caption("University of Toronto — internal analysis tool")
 
