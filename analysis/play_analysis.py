@@ -190,9 +190,9 @@ def redzone_tendencies(df: pd.DataFrame) -> pd.DataFrame:
     rz = df[df["field_zone"].astype(str).str.contains("Red Zone", na=False)]
     if rz.empty:
         return pd.DataFrame()
-    return rz["play_category"].value_counts(normalize=True).mul(100).round(1).reset_index(
-        names=["play_type"]
-    ).rename(columns={"proportion": "pct", "count": "pct"})
+    result = rz["play_category"].value_counts(normalize=True).mul(100).round(1).reset_index()
+    result.columns = ["play_type", "pct"]
+    return result
 
 
 def motion_tendency(df: pd.DataFrame) -> pd.DataFrame:
