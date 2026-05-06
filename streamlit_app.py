@@ -39,6 +39,7 @@ from analysis.predictor import train, predict_matchup
 from analysis.scouting import (
     win_condition_fingerprint, how_to_beat, momentum_score, matchup_exploiter
 )
+import datetime
 
 TORONTO = "Toronto"
 UFT_BLUE  = "#003E7E"
@@ -202,13 +203,61 @@ weak = weakness_scores(agg)
 opponents = sorted([t for t in agg["team"].unique() if t != TORONTO])
 all_teams  = sorted(agg["team"].unique().tolist())
 
-# ── Global opponent selector (used by all UofT tabs) ──────────────────────────
+# ── Load 2026-27 Toronto schedule ─────────────────────────────────────────────
+SCHEDULE_PATH = Path(__file__).parent / "data" / "manual" / "toronto_schedule_2026.csv"
+
+@st.cache_data
+def load_schedule():
+    if SCHEDULE_PATH.exists():
+        return pd.read_csv(SCHEDULE_PATH, parse_dates=["date"])
+    return pd.DataFrame()
+
+schedule_df = load_schedule()
+
+# Find next upcoming game
+today = datetime.date.today()
+next_game = None
+if not schedule_df.empty:
+    upcoming = schedule_df[schedule_df["date"].dt.date >= today]
+    if not upcoming.empty:
+        next_game = upcoming.iloc[0]
+
+# ── Next Game Banner ───────────────────────────────────────────────────────────
+if next_game is not None:
+    days_away = (next_game["date"].date() - today).days
+    loc_icon  = "🏠" if next_game["location"] == "Home" else "✈️"
+    time_str  = datetime.datetime.strptime(str(next_game["time_et"]), "%H:%M").strftime("%I:%M %p ET").lstrip("0")
+    banner_bg = UFT_BLUE
+    st.markdown(
+        f"""
+        <div style="background:{banner_bg};border-radius:10px;padding:18px 24px;margin-bottom:16px;display:flex;align-items:center;gap:32px;flex-wrap:wrap;">
+          <div>
+            <div style="color:#aac8f5;font-size:0.75rem;font-weight:600;letter-spacing:1px;text-transform:uppercase">Next Game — Week {int(next_game['week'])}</div>
+            <div style="color:white;font-size:1.5rem;font-weight:700;margin-top:2px">🏈 {TORONTO} vs {next_game['opponent']}</div>
+          </div>
+          <div style="display:flex;gap:28px;flex-wrap:wrap">
+            <div><div style="color:#aac8f5;font-size:0.7rem;letter-spacing:1px">DATE</div><div style="color:white;font-weight:600">{next_game['date'].strftime('%b %d, %Y')}</div></div>
+            <div><div style="color:#aac8f5;font-size:0.7rem;letter-spacing:1px">TIME</div><div style="color:white;font-weight:600">{time_str}</div></div>
+            <div><div style="color:#aac8f5;font-size:0.7rem;letter-spacing:1px">LOCATION</div><div style="color:white;font-weight:600">{loc_icon} {next_game['location']}</div></div>
+            <div><div style="color:#aac8f5;font-size:0.7rem;letter-spacing:1px">DAYS AWAY</div><div style="color:white;font-weight:600">{days_away}</div></div>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+# ── Global opponent selector (auto-selects next opponent) ─────────────────────
+default_opp_idx = 0
+if next_game is not None and next_game["opponent"] in opponents:
+    default_opp_idx = opponents.index(next_game["opponent"])
+
 st.markdown("### Select Upcoming Opponent")
-opponent = st.selectbox("Opponent", opponents, label_visibility="collapsed", key="global_opp")
+opponent = st.selectbox("Opponent", opponents, index=default_opp_idx, label_visibility="collapsed", key="global_opp")
 st.markdown("---")
 
 # ── Tabs ───────────────────────────────────────────────────────────────────────
-tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+tab0, tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+    "📅 Schedule",
     "📊 This Week's Game",
     "🎯 Opponent Breakdown",
     "📈 Toronto Trends",
@@ -217,6 +266,84 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
     "🔭 League Intel",
     "🗂 Raw Data",
 ])
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Tab 0 — Schedule
+# ══════════════════════════════════════════════════════════════════════════════
+with tab0:
+    st.subheader("2026-27 Toronto Varsity Blues — Schedule")
+
+    if schedule_df.empty:
+        st.info("Schedule not loaded.")
+    else:
+        # Merge results from all_games.csv where available
+        tor_results = pd.DataFrame()
+        if not games.empty:
+            tor_games = games[
+                (games["season"] == 2026) &
+                ((games["home_team"] == TORONTO) | (games["away_team"] == TORONTO))
+            ].copy()
+            if not tor_games.empty:
+                def _result_row(r):
+                    is_home = r["home_team"] == TORONTO
+                    opp = r["away_team"] if is_home else r["home_team"]
+                    tor_score = int(r["home_score"]) if is_home else int(r["away_score"])
+                    opp_score = int(r["away_score"]) if is_home else int(r["home_score"])
+                    result = "W" if tor_score > opp_score else "L"
+                    return pd.Series({"opponent": opp, "result": result,
+                                      "score": f"{tor_score}–{opp_score}"})
+                tor_results = tor_games.apply(_result_row, axis=1)
+
+        # Build display table
+        rows = []
+        for _, g in schedule_df.iterrows():
+            is_next = (next_game is not None and g["date"] == next_game["date"]
+                       and g["opponent"] == next_game["opponent"])
+            loc_icon = "🏠 Home" if g["location"] == "Home" else "✈️ Away"
+            time_fmt = datetime.datetime.strptime(str(g["time_et"]), "%H:%M").strftime("%I:%M %p ET").lstrip("0")
+            result_str, score_str = "", ""
+            if not tor_results.empty:
+                match = tor_results[tor_results["opponent"] == g["opponent"]]
+                if not match.empty:
+                    result_str = match.iloc[0]["result"]
+                    score_str  = match.iloc[0]["score"]
+
+            rows.append({
+                "Wk": int(g["week"]),
+                "Date": g["date"].strftime("%a %b %d"),
+                "Opponent": ("▶ " if is_next else "") + str(g["opponent"]),
+                "Location": loc_icon,
+                "Time": time_fmt,
+                "Result": result_str,
+                "Score": score_str,
+            })
+
+        sched_display = pd.DataFrame(rows)
+
+        # Colour next game row
+        def _style_sched(row):
+            if row["Opponent"].startswith("▶"):
+                return [f"background-color:{UFT_BLUE};color:white"] * len(row)
+            elif row["Result"] == "W":
+                return ["color:#1a7a4a;font-weight:600"] * len(row)
+            elif row["Result"] == "L":
+                return ["color:#c0392b;font-weight:600"] * len(row)
+            return [""] * len(row)
+
+        st.dataframe(
+            sched_display.style.apply(_style_sched, axis=1),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+        # Season record so far
+        if not tor_results.empty:
+            wins   = (tor_results["result"] == "W").sum()
+            losses = (tor_results["result"] == "L").sum()
+            st.markdown(f"**Record: {wins}–{losses}** &nbsp;|&nbsp; {len(schedule_df) - wins - losses} games remaining")
+
+        st.caption("▶ = next upcoming game  ·  Results populate automatically once games are scraped")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
