@@ -144,7 +144,7 @@ with st.sidebar:
                 RAW = Path(__file__).parent / "data" / "raw"
 
                 all_games = []
-                for yr in [2024, 2023, 2022]:
+                for yr in [2025, 2024, 2023, 2022]:
                     try:
                         all_games.append(scrape_season(yr)); time.sleep(0.5)
                     except Exception: pass
@@ -152,7 +152,7 @@ with st.sidebar:
                     pd.concat(all_games, ignore_index=True).to_csv(RAW / "all_games.csv", index=False)
 
                 gl_rows = []
-                for season in ["2024-25", "2023-24"]:
+                for season in ["2025-26", "2024-25", "2023-24"]:
                     for t in _TEAMS:
                         try:
                             gl_rows.append(scrape_team_gamelog(t, season)); time.sleep(0.4)

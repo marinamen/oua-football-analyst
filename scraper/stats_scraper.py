@@ -21,7 +21,7 @@ TEAMS = [
     "queens", "toronto", "waterloo", "western", "windsor", "york",
 ]
 
-SEASONS = ["2024-25", "2023-24", "2022-23"]
+SEASONS = ["2025-26", "2024-25", "2023-24", "2022-23"]
 
 TEAM_NAME_MAP = {
     "carleton": "Carleton", "guelph": "Guelph", "laurier": "Laurier",

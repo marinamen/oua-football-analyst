@@ -16,6 +16,7 @@ RAW_DIR.mkdir(parents=True, exist_ok=True)
 HEADERS = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"}
 
 SEASONS = {
+    2025: "2025-26",
     2024: "2024-25",
     2023: "2023-24",
     2022: "2022-23",
@@ -37,8 +38,9 @@ def scrape_season(year: int) -> pd.DataFrame:
 
     for table in soup.select("table.table"):
         # each table = one week; caption or preceding heading has the date
-        caption = table.find_previous(["h2", "h3", "caption", "div"], class_=lambda c: c and "date" in (c or "").lower())
-        week_label = caption.get_text(strip=True) if caption else ""
+        # try to get a clean week/date heading from the table's preceding sibling heading
+        caption = table.find_previous(["h2", "h3", "h4"])
+        week_label = caption.get_text(strip=True)[:60] if caption else ""
 
         for row in table.select("tr.event-row"):
             away_td = row.select_one("td.awayteam")
@@ -54,11 +56,16 @@ def scrape_season(year: int) -> pd.DataFrame:
             away_score_el = away_td.select_one(".result")
             home_score_el = home_td.select_one(".result")
 
-            away_score = away_score_el.get_text(strip=True) if away_score_el else ""
-            home_score = home_score_el.get_text(strip=True) if home_score_el else ""
-            # strip the caret arrow from winner score
-            home_score = home_score.replace("", "").strip()
-            away_score = away_score.replace("", "").strip()
+            import re as _re
+            def _score(el):
+                """Extract just the numeric score, ignoring any icon characters."""
+                if not el:
+                    return ""
+                digits = _re.sub(r"[^\d]", "", el.get_text())
+                return digits
+
+            away_score = _score(away_score_el)
+            home_score = _score(home_score_el)
 
             status = status_td.get_text(strip=True) if status_td else ""
 
@@ -86,7 +93,7 @@ def scrape_season(year: int) -> pd.DataFrame:
 
 if __name__ == "__main__":
     all_games = []
-    for year in [2024, 2023, 2022]:
+    for year in [2025, 2024, 2023, 2022]:
         try:
             df = scrape_season(year)
             all_games.append(df)
