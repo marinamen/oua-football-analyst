@@ -132,13 +132,77 @@ def derive_buckets(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def _repair_excel_bytes(data: bytes) -> bytes:
+    """
+    Fix corrupted OUA coach Excel files where cells have t='s' (shared-string)
+    type but store a literal value like '0,1,3' that isn't a valid integer index.
+    Strategy: add the literal string to the shared-strings table, then replace
+    the cell value with the correct integer index.
+    """
+    import zipfile, io, re
+
+    with zipfile.ZipFile(io.BytesIO(data)) as zin:
+        names = zin.namelist()
+        files = {n: zin.read(n) for n in names}
+
+    ss_path = "xl/sharedStrings.xml"
+    ws_path = "xl/worksheets/sheet1.xml"
+    if ss_path not in files or ws_path not in files:
+        return data  # can't repair, return as-is
+
+    ss = files[ss_path].decode("utf-8")
+    ws = files[ws_path].decode("utf-8")
+
+    # Find numeric cells (no t= attr) whose <v> contains commas — invalid for int()
+    bad_vals = set(re.findall(
+        r'<c r="[^"]+">(?:\s*<[^/v][^>]*>)*\s*<v>([^<]*,[^<]*)</v>', ws
+    ))
+    if not bad_vals:
+        return data  # nothing to fix
+
+    # Add each bad value to the shared-strings table and remap cell to t="s"
+    existing = re.findall(r'<si>', ss)
+    next_idx = len(existing)
+    replacements = {}
+    for val in sorted(bad_vals):
+        replacements[val] = next_idx
+        ss = ss.replace("</sst>", f"  <si><t>{val}</t></si>\n</sst>")
+        ss = re.sub(r'(count=")(\d+)(")', lambda m: m.group(1) + str(int(m.group(2)) + 1) + m.group(3), ss, count=1)
+        ss = re.sub(r'(uniqueCount=")(\d+)(")', lambda m: m.group(1) + str(int(m.group(2)) + 1) + m.group(3), ss, count=1)
+        next_idx += 1
+
+    for val, idx in replacements.items():
+        # Replace: <c r="XX99">\n  <v>0,1,3</v>  →  <c r="XX99" t="s">\n  <v>278</v>
+        ws = re.sub(
+            rf'(<c r="[^"]+")(\s*>)(\s*<v>){re.escape(val)}(</v>)',
+            lambda m, i=idx: m.group(1) + ' t="s"' + m.group(2) + m.group(3) + str(i) + m.group(4),
+            ws,
+        )
+
+    files[ss_path] = ss.encode("utf-8")
+    files[ws_path] = ws.encode("utf-8")
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zout:
+        for name in names:
+            zout.writestr(name, files[name])
+    return buf.getvalue()
+
+
 def load_play_file(uploaded_file) -> pd.DataFrame:
     """Load an uploaded Excel or CSV file and normalise it."""
+    import io
     name = uploaded_file.name.lower()
     if name.endswith(".csv"):
         df = pd.read_csv(uploaded_file)
     else:
-        df = pd.read_excel(uploaded_file)
+        raw = uploaded_file.read()
+        try:
+            df = pd.read_excel(io.BytesIO(raw))
+        except (ValueError, Exception):
+            # Attempt to repair corrupted shared-string references
+            fixed = _repair_excel_bytes(raw)
+            df = pd.read_excel(io.BytesIO(fixed))
     df = normalize_columns(df)
     df = derive_buckets(df)
     return df
