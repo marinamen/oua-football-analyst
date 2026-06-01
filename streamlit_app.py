@@ -79,7 +79,7 @@ def _check_credentials(username: str, password: str) -> str | None:
 def _show_login_wall():
     st.markdown(
         "<h2 style='text-align:center;margin-top:3rem'>🏈 Varsity Blues Football Analytics</h2>"
-        "<p style='text-align:center;color:#888'>University of Toronto — staff access only</p>",
+        "<p style='text-align:center;color:#888'>University of Toronto staff only</p>",
         unsafe_allow_html=True,
     )
     col = st.columns([1, 1.2, 1])[1]
@@ -125,7 +125,7 @@ else:
     auth_name = "Dev"  # no secrets → open access for local development
 
 st.title("🏈 Varsity Blues Football Analytics")
-st.caption("University of Toronto — internal analysis tool")
+st.caption("University of Toronto")
 
 # ── Sidebar ────────────────────────────────────────────────────────────────────
 with st.sidebar:
@@ -182,11 +182,11 @@ with st.sidebar:
         "SOS-Adjusted Stats",
         value=False,
         help="Normalizes offensive stats by opponent defensive quality. "
-             "York's numbers drop significantly — they padded stats vs weak defenses.",
+             "York's numbers drop when adjusted for weak opponents.",
     )
     st.caption("SOS adjusted" if sos_on else "Raw stats")
     st.markdown("---")
-    st.caption("Data: oua.ca — no paid services")
+    st.caption("Data: oua.ca")
 
 
 # ── Load data ──────────────────────────────────────────────────────────────────
@@ -232,7 +232,7 @@ if next_game is not None:
         f"""
         <div style="background:{banner_bg};border-radius:10px;padding:18px 24px;margin-bottom:16px;display:flex;align-items:center;gap:32px;flex-wrap:wrap;">
           <div>
-            <div style="color:#aac8f5;font-size:0.75rem;font-weight:600;letter-spacing:1px;text-transform:uppercase">Next Game — Week {int(next_game['week'])}</div>
+            <div style="color:#aac8f5;font-size:0.75rem;font-weight:600;letter-spacing:1px;text-transform:uppercase">Next Game - Week {int(next_game['week'])}</div>
             <div style="color:white;font-size:1.5rem;font-weight:700;margin-top:2px">🏈 {TORONTO} vs {next_game['opponent']}</div>
           </div>
           <div style="display:flex;gap:28px;flex-wrap:wrap">
@@ -256,9 +256,8 @@ opponent = st.selectbox("Opponent", opponents, index=default_opp_idx, label_visi
 st.markdown("---")
 
 # ── Tabs ───────────────────────────────────────────────────────────────────────
-tab0, tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+tab0, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
     "📅 Schedule",
-    "📊 This Week's Game",
     "🎯 Opponent Breakdown",
     "📈 Toronto Trends",
     "📋 Game Plan",
@@ -272,7 +271,7 @@ tab0, tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
 # Tab 0 — Schedule
 # ══════════════════════════════════════════════════════════════════════════════
 with tab0:
-    st.subheader("2026-27 Toronto Varsity Blues — Schedule")
+    st.subheader("2026-27 Schedule")
 
     if schedule_df.empty:
         st.info("Schedule not loaded.")
@@ -343,64 +342,14 @@ with tab0:
             losses = (tor_results["result"] == "L").sum()
             st.markdown(f"**Record: {wins}–{losses}** &nbsp;|&nbsp; {len(schedule_df) - wins - losses} games remaining")
 
-        st.caption("▶ = next upcoming game  ·  Results populate automatically once games are scraped")
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# Tab 1 — This Week's Game
-# ══════════════════════════════════════════════════════════════════════════════
-with tab1:
-    st.subheader(f"Toronto vs {opponent}")
-    st.caption(f"Using {'SOS-adjusted' if sos_on else 'raw'} stats")
-
-    loc = st.radio("Game location", ["Toronto at Home", "Toronto Away"], horizontal=True)
-    home_team = TORONTO if loc == "Toronto at Home" else opponent
-    away_team = opponent if loc == "Toronto at Home" else TORONTO
-
-    if st.button("Run Prediction", type="primary"):
-        with st.spinner("Training model..."):
-            try:
-                _, _, _, acc = train(games, agg)
-                st.success(f"Model accuracy: {acc:.1%}")
-            except Exception as e:
-                st.warning(f"Model note: {e}")
-
-        result = predict_matchup(home_team, away_team, agg)
-        if "error" in result:
-            st.error(result["error"])
-        else:
-            c1, c2 = st.columns(2)
-            tor_prob = result["home_win_prob"] if home_team == TORONTO else result["away_win_prob"]
-            opp_prob = 1 - tor_prob
-            c1.metric("Toronto win probability", f"{tor_prob:.1%}",
-                      delta="Favoured" if tor_prob > 0.5 else "Underdog")
-            c2.metric(f"{opponent} win probability", f"{opp_prob:.1%}")
-
-            st.markdown("### Statistical Edge Breakdown")
-            st.caption("Where Toronto has the advantage and where they don't")
-            rows = []
-            for feat, vals in result["breakdown"].items():
-                h_val = vals["home"]
-                a_val = vals["away"]
-                tor_val = h_val if home_team == TORONTO else a_val
-                opp_val = a_val if home_team == TORONTO else h_val
-                defensive = feat in ("yards_allowed_per_game", "passing_yards_allowed",
-                                     "rushing_yards_allowed", "turnovers")
-                tor_edge = (tor_val < opp_val) if defensive else (tor_val > opp_val)
-                rows.append({
-                    "Factor": feat.replace("_", " ").title(),
-                    "Toronto": round(tor_val, 1),
-                    opponent: round(opp_val, 1),
-                    "Edge": "✅ Toronto" if tor_edge else f"⚠️ {opponent}",
-                })
-            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+        st.caption("▶ = next game · scores update after scraping")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Tab 2 — Opponent Breakdown
 # ══════════════════════════════════════════════════════════════════════════════
 with tab2:
-    st.subheader(f"Scouting {opponent} — What Toronto Can Exploit")
+    st.subheader(f"{opponent} Scouting Report")
 
     # Weakness radar
     if opponent in weak["team"].values:
@@ -412,7 +361,7 @@ with tab2:
         c1, c2 = st.columns([1, 1])
         with c1:
             st.markdown(f"#### {opponent} Weakness Radar")
-            st.caption(f"Higher = weaker. Rank out of {len(all_teams)} teams.")
+            st.caption(f"Higher = weaker. {len(all_teams)} teams.")
             fig = go.Figure(go.Scatterpolar(
                 r=values + [values[0]],
                 theta=labels + [labels[0]],
@@ -428,8 +377,7 @@ with tab2:
             st.plotly_chart(fig, use_container_width=True)
 
         with c2:
-            st.markdown("#### Toronto Strengths vs Their Weaknesses")
-            st.caption("Where Toronto's offense meets their defensive gaps")
+            st.markdown("#### Toronto vs Their Weaknesses")
             exploit_rows = []
             stat_map = {
                 "weakness_pass_defense":   ("passing_yards",         "off_pass_yds",          "Toronto pass offense vs their pass D"),
@@ -453,11 +401,11 @@ with tab2:
             if exploit_rows:
                 st.dataframe(pd.DataFrame(exploit_rows), use_container_width=True, hide_index=True)
             else:
-                st.info("No glaring weaknesses detected — this is a well-rounded opponent.")
+                st.info("No major weaknesses in the data.")
 
     # League-wide comparison highlighting opponent
     st.markdown("---")
-    st.markdown(f"#### {opponent} vs League — Key Metrics")
+    st.markdown(f"#### {opponent} vs League")
     metric_opts = {
         "Total Offense (yds/season)": "off_total_yds",
         "Total Defense Allowed":      "def_total_yds_allowed",
@@ -482,7 +430,7 @@ with tab2:
             color="team",
             color_discrete_map={opponent: UFT_RED, TORONTO: UFT_BLUE},
             labels={"team": "", sel_metric: sel_metric_label},
-            title=f"{sel_metric_label} — {coaches['season'].max()}",
+            title=f"{sel_metric_label} ({coaches['season'].max()})",
         )
         fig_bar.update_layout(showlegend=False)
         st.plotly_chart(fig_bar, use_container_width=True)
@@ -490,7 +438,7 @@ with tab2:
     # How to beat them
     if not gamelog.empty:
         st.markdown("---")
-        st.markdown(f"#### How Toronto Beats {opponent} — Pattern Analysis")
+        st.markdown(f"#### How Toronto Beats {opponent}")
         htb = how_to_beat(gamelog, opponent)
         st.caption(htb.get("summary", ""))
         for finding in htb.get("findings", []):
@@ -502,7 +450,7 @@ with tab2:
 # Tab 3 — Toronto Trends
 # ══════════════════════════════════════════════════════════════════════════════
 with tab3:
-    st.subheader("Toronto — Season Performance")
+    st.subheader("Toronto Season Stats")
 
     if gamelog.empty:
         st.info("Game log data not loaded.")
@@ -517,7 +465,7 @@ with tab3:
         if "trend_df" in mom:
             fig_mom = px.line(
                 mom["trend_df"], x="label", y="composite",
-                title="Toronto Performance Composite — weighted by recency",
+                title="Toronto Performance (weighted by recency)",
                 markers=True, labels={"label": "Game", "composite": "Score"},
                 color_discrete_sequence=[UFT_BLUE],
             )
@@ -530,7 +478,7 @@ with tab3:
             trend["label"] = trend["game_num"].astype(str) + ". " + trend["opponent"] + " (" + trend["result"] + ")"
             fig2 = px.line(
                 trend, x="label", y="total_offense", markers=True,
-                title="Toronto — Offensive Yards Per Game",
+                title="Toronto Offensive Yards Per Game",
                 labels={"label": "Game", "total_offense": "Total Yards"},
                 color_discrete_sequence=[UFT_BLUE],
             )
@@ -540,7 +488,7 @@ with tab3:
             fig3 = px.bar(
                 trend, x="label", y=["turnovers", "sacks_taken", "penalty_yards"],
                 barmode="group",
-                title="Toronto — Turnovers, Sacks & Penalty Yards",
+                title="Toronto Turnovers, Sacks & Penalty Yards",
                 labels={"label": "Game", "value": "Count / Yards"},
             )
             fig3.update_xaxes(tickangle=30)
@@ -548,14 +496,14 @@ with tab3:
 
         st.markdown("---")
         st.markdown("#### Toronto Win Condition Fingerprint")
-        st.caption("What statistically separates Toronto wins from losses")
+        st.caption("What's different in wins vs losses")
         wcf = win_condition_fingerprint(gamelog, TORONTO)
         if wcf.empty:
             st.info("Not enough wins and losses to compare yet.")
         else:
             top = wcf.iloc[0]
             st.info(
-                f"**Biggest swing:** {top['Stat']} — "
+                f"**Biggest swing:** {top['Stat']}: "
                 f"{top['Avg in Wins']} in wins vs {top['Avg in Losses']} in losses ({top['Swing']}). "
                 f"Toronto needs to be *{top['better_when']}* in this stat to win."
             )
@@ -565,7 +513,7 @@ with tab3:
                 wcf.head(5), x="Stat", y=["Avg in Wins", "Avg in Losses"],
                 barmode="group",
                 color_discrete_map={"Avg in Wins": UFT_BLUE, "Avg in Losses": UFT_RED},
-                title="Toronto — Key Stats: Wins vs Losses",
+                title="Toronto: Wins vs Losses",
                 labels={"value": "Average", "variable": ""},
             )
             st.plotly_chart(fig_wcf, use_container_width=True)
@@ -575,8 +523,7 @@ with tab3:
 # Tab 4 — Game Plan
 # ══════════════════════════════════════════════════════════════════════════════
 with tab4:
-    st.subheader(f"Game Plan — Toronto vs {opponent}")
-    st.caption("Specific statistical mismatches to exploit this week")
+    st.subheader(f"Game Plan: Toronto vs {opponent}")
 
     if not gamelog.empty:
         mom_opp = momentum_score(gamelog, opponent)
@@ -588,7 +535,7 @@ with tab4:
 
     st.markdown("---")
     st.markdown("#### Matchup Exploiter")
-    st.caption("Biggest statistical mismatches — 🟢 = Toronto advantage, 🔴 = their advantage")
+    st.caption("🟢 = Toronto advantage, 🔴 = their advantage")
     exploits = matchup_exploiter(agg, TORONTO, opponent)
     if not exploits:
         st.info("Not enough data to compute mismatches.")
@@ -596,7 +543,7 @@ with tab4:
         for i, ex in enumerate(exploits):
             is_toronto = ex["edge"] == TORONTO
             with st.expander(
-                f"{'🟢' if is_toronto else '🔴'} **{ex['title']}** — Edge: {ex['edge']}",
+                f"{'🟢' if is_toronto else '🔴'} **{ex['title']}** ({ex['edge']})",
                 expanded=(i < 2),
             ):
                 c1, c2 = st.columns(2)
@@ -609,11 +556,8 @@ with tab4:
 # Tab 5 — Opponent Play Tendencies
 # ══════════════════════════════════════════════════════════════════════════════
 with tab5:
-    st.subheader(f"{opponent} — Offensive Tendencies")
-    st.caption(
-        f"Upload {opponent}'s tagged play-by-play to give Toronto's defence a schematic edge. "
-        "Organised the way a coordinator thinks: Run Game → Pass Game → Situational → Efficiency."
-    )
+    st.subheader(f"{opponent} Play Tendencies")
+    st.caption(f"Upload {opponent}'s play-by-play. Run Game, Pass Game, Situational, Efficiency.")
 
     TEMPLATE_PATH  = Path(__file__).parent / "data" / "manual" / "play_template.xlsx"
     FAKE_DATA_PATH = Path(__file__).parent / "data" / "manual" / "queens_plays_3games.xlsx"
@@ -647,8 +591,8 @@ with tab5:
         _raw = pd.read_excel(FAKE_DATA_PATH)
         play_df = derive_buckets(normalize_columns(_raw))
         st.info(
-            f"📊 Showing **Queen's sample data** (3 games, {len(play_df)} plays) — "
-            f"upload {opponent}'s actual file above to replace it."
+            f"Showing Queen's data ({len(play_df)} plays). "
+            f"Upload {opponent}'s file above to switch."
         )
 
     if play_df is not None and not play_df.empty:
@@ -715,7 +659,7 @@ with tab5:
                     run_dd, text_auto=".0f",
                     color_continuous_scale=["white", UFT_RED],
                     labels={"color": "Run %"},
-                    title="Run % by Down × Distance — darker = more likely to run",
+                    title="Run % by Down x Distance",
                 )
                 fig_dd.update_layout(margin=dict(t=40, b=10))
                 st.plotly_chart(fig_dd, use_container_width=True)
@@ -736,7 +680,7 @@ with tab5:
                         dt, x="direction", y="pct",
                         color_discrete_sequence=[UFT_RED],
                         labels={"pct": "% of runs", "direction": ""},
-                        title="Where do they prefer to run?",
+                        title="Run Direction",
                     )
                     fig_dir.update_layout(margin=dict(t=40, b=10))
                     st.plotly_chart(fig_dir, use_container_width=True)
@@ -751,7 +695,7 @@ with tab5:
                         rsr, x="direction", y="success_rate", text="plays",
                         color_discrete_sequence=[UFT_BLUE],
                         labels={"success_rate": "Success %", "direction": ""},
-                        title="Success % per run gap — where to stack the box",
+                        title="Run Success % by Direction",
                     )
                     fig_rsr.update_traces(texttemplate="%{text} plays", textposition="outside")
                     fig_rsr.update_layout(margin=dict(t=40, b=10))
@@ -763,7 +707,7 @@ with tab5:
 
             with rg3:
                 st.markdown("##### Run Direction by Personnel")
-                st.caption("Which gap does each personnel package attack?")
+                st.caption("Run direction by personnel group")
                 dbp = direction_by_personnel(filtered)
                 if not dbp.empty:
                     fig_dbp = px.bar(
@@ -782,7 +726,7 @@ with tab5:
 
             with rg4:
                 st.markdown("##### Hash Mark Tendencies")
-                st.caption("Does hash position change their run/pass ratio?")
+                st.caption("Does hash affect run/pass split?")
                 ht = hash_tendency(filtered)
                 if not ht.empty:
                     fig_ht = px.bar(
@@ -838,7 +782,7 @@ with tab5:
 
             with pg1:
                 st.markdown("##### Pass Depth by Down & Distance")
-                st.caption("Short / Intermediate / Deep — what they target on each down")
+                st.caption("Pass depth by down")
                 pdbs = pass_depth_by_situation(filtered)
                 if not pdbs.empty and "down" in pdbs.columns:
                     # summarise to down × pass_depth
@@ -852,7 +796,7 @@ with tab5:
                             barmode="stack",
                             color_discrete_sequence=[UFT_BLUE, "#005BAC", "#88B0D8"],
                             labels={"pct": "% of passes", "down": "Down", "pass_depth": "Depth"},
-                            title="Pass depth by down — Short / Intermediate / Deep",
+                            title="Pass Depth by Down",
                         )
                         fig_pd.update_layout(margin=dict(t=40, b=10), legend=dict(orientation="h"))
                         st.plotly_chart(fig_pd, use_container_width=True)
@@ -869,7 +813,7 @@ with tab5:
 
             with pg2:
                 st.markdown("##### Completion Rate by Pass Depth")
-                st.caption("Where are they efficient? Where can Toronto's secondary sit on routes?")
+                st.caption("Where are they completing passes?")
                 crd = completion_rate_by_depth(filtered)
                 if not crd.empty:
                     fig_crd = px.bar(
@@ -888,14 +832,14 @@ with tab5:
 
             with pg3:
                 st.markdown("##### Play Action Usage")
-                st.caption("When do they fake the handoff? Critical for linebacker keys.")
+                st.caption("Play action usage by down")
                 pat = play_action_tendency(filtered)
                 if not pat.empty:
                     fig_pa = px.bar(
                         pat, x="down", y="play_action_pct", text="plays",
                         color_discrete_sequence=["#7B3F9E"],
                         labels={"play_action_pct": "Play Action %", "down": "Down"},
-                        title="Play action rate by down — fake-heavy = run-first tendency",
+                        title="Play Action Rate by Down",
                     )
                     fig_pa.update_traces(texttemplate="%{text} pass plays", textposition="outside")
                     fig_pa.update_layout(margin=dict(t=40, b=10))
@@ -905,7 +849,7 @@ with tab5:
 
             with pg4:
                 st.markdown("##### Pass Success Rate by Depth")
-                st.caption("Which depth wins first downs? Tells you where to double.")
+                st.caption("Which depth converts?")
                 psd = pass_success_by_depth(filtered)
                 if not psd.empty:
                     fig_psd = px.bar(
@@ -928,7 +872,7 @@ with tab5:
                     barmode="group",
                     color_discrete_map={"Run": UFT_RED, "Pass": UFT_BLUE},
                     labels={"pct": "% of plays", "motion": "", "play_category": ""},
-                    title="Does motion tip run or pass? — defenders should key on motion frequency",
+                    title="Motion vs Run/Pass Split",
                 )
                 fig_mt.update_layout(margin=dict(t=40, b=10), legend=dict(orientation="h"))
                 st.plotly_chart(fig_mt, use_container_width=True)
@@ -941,7 +885,7 @@ with tab5:
 
             with sit1:
                 st.markdown("##### 3rd Down Breakdown")
-                st.caption("Conversion rate and run/pass split by distance — critical for goal-line and prevent packages")
+                st.caption("Conversion rate and run/pass split by distance")
                 tdb = third_down_breakdown(filtered)
                 if not tdb.empty:
                     fig_3d = px.bar(
@@ -966,7 +910,7 @@ with tab5:
 
             with sit2:
                 st.markdown("##### Red Zone Tendencies")
-                st.caption("Inside the 10-yard line — goal-line personnel and tendencies")
+                st.caption("Inside the 10")
                 rzd = redzone_tendencies_detail(play_df)
                 if not rzd.empty:
                     fig_rz = px.bar(
@@ -991,8 +935,8 @@ with tab5:
                 else:
                     st.info("Add a Yard_Line column for red zone analysis.")
 
-            st.markdown("##### Game Situation — How Play-Calling Shifts")
-            st.caption("Leading teams run more. Trailing teams throw more. Does this opponent follow the pattern?")
+            st.markdown("##### Play-Calling by Game Situation")
+            st.caption("Run/pass split by game situation")
             situ = situation_tendency(play_df)
             if not situ.empty:
                 fig_sit = px.bar(
@@ -1000,7 +944,7 @@ with tab5:
                     barmode="group",
                     color_discrete_map={"Run": UFT_RED, "Pass": UFT_BLUE},
                     labels={"pct": "% of plays", "game_situation": "Situation", "play_category": ""},
-                    title="Run vs Pass by game situation — Leading / Close / Trailing",
+                    title="Run vs Pass by Game Situation",
                     category_orders={"game_situation": ["Leading", "Close", "Trailing"]},
                 )
                 fig_sit.update_layout(margin=dict(t=40, b=10), legend=dict(orientation="h"))
@@ -1016,14 +960,14 @@ with tab5:
 
             with ef1:
                 st.markdown("##### Success Rate by Formation")
-                st.caption("Which formation actually moves the chains?")
+                st.caption("Which formation is working?")
                 srf = success_rate_by_group(filtered, "formation")
                 if not srf.empty:
                     fig_srf = px.bar(
                         srf, x="formation", y="success_rate", text="plays",
                         color_discrete_sequence=[UFT_BLUE],
                         labels={"success_rate": "Success %", "formation": ""},
-                        title="Formation success rate — meet industry standard thresholds",
+                        title="Formation Success Rate",
                     )
                     fig_srf.update_traces(texttemplate="%{text} plays", textposition="outside")
                     fig_srf.add_hline(y=50, line_dash="dash", line_color="gray",
@@ -1035,7 +979,7 @@ with tab5:
 
             with ef2:
                 st.markdown("##### Success Rate by Personnel")
-                st.caption("Which package is their most dangerous — and where to focus coverage")
+                st.caption("Which personnel group is most effective?")
                 srp = success_rate_by_group(filtered, "personnel")
                 if not srp.empty:
                     fig_srp = px.bar(
@@ -1062,7 +1006,7 @@ with tab5:
                         ag, x="formation", y="avg_gain", text="plays",
                         color_discrete_sequence=[UFT_RED],
                         labels={"avg_gain": "Avg Yards/Play", "formation": ""},
-                        title="Yards per play — which set gains the most?",
+                        title="Yards Per Play by Formation",
                     )
                     fig_ag.update_traces(texttemplate="%{text} plays", textposition="outside")
                     fig_ag.update_layout(margin=dict(t=40, b=10))
@@ -1070,7 +1014,7 @@ with tab5:
 
             with ef4:
                 st.markdown("##### Explosive Plays")
-                st.caption("Runs ≥10 yds or passes ≥20 yds — where do chunk plays come from?")
+                st.caption("Runs 10+ yds, passes 20+ yds")
                 exp = explosive_plays(filtered)
                 if not exp.empty:
                     fig_exp = px.bar(
@@ -1079,7 +1023,7 @@ with tab5:
                         color_discrete_map={"Run": UFT_RED, "Pass": UFT_BLUE},
                         text="avg_gain",
                         labels={"count": "# Explosive Plays", "play_type": ""},
-                        title="Explosive play count and avg gain",
+                        title="Explosive Plays",
                     )
                     fig_exp.update_traces(texttemplate="avg %{text} yds", textposition="outside")
                     fig_exp.update_layout(showlegend=False, margin=dict(t=40, b=10))
@@ -1121,7 +1065,6 @@ with tab5:
 # ══════════════════════════════════════════════════════════════════════════════
 with tab6:
     st.subheader("League Intel")
-    st.caption("Watch how other OUA teams play against each other — scout future opponents before you face them")
 
     non_toronto = [t for t in all_teams if t != TORONTO]
     li1, li2 = st.columns(2)
@@ -1174,11 +1117,11 @@ with tab6:
 
     # Matchup exploiter between the two non-Toronto teams
     st.markdown("#### Matchup Exploiter")
-    st.caption(f"Biggest mismatches if {team_a} hosts {team_b} — useful intel if Toronto faces either of them")
+    st.caption(f"Key mismatches: {team_a} vs {team_b}")
     li_exploits = matchup_exploiter(agg, team_a, team_b)
     if li_exploits:
         for ex in li_exploits[:3]:
-            with st.expander(f"**{ex['title']}** — Edge: {ex['edge']}", expanded=False):
+            with st.expander(f"**{ex['title']}** ({ex['edge']})", expanded=False):
                 c1, c2 = st.columns(2)
                 c1.metric(team_a, ex["home_val"])
                 c2.metric(team_b, ex["away_val"])
@@ -1187,7 +1130,7 @@ with tab6:
     # Upload play data for non-Toronto team
     st.markdown("---")
     st.markdown(f"#### Upload {team_a} or {team_b} Play Data")
-    st.caption("If you have their tagged film, upload it here to see their tendencies")
+    st.caption("Upload their film data to see tendencies")
     li_uploaded = st.file_uploader("Play-by-play Excel or CSV", type=["xlsx","xls","csv"], key="li_plays")
     if li_uploaded:
         try:
