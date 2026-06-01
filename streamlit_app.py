@@ -85,7 +85,7 @@ def _show_login_wall():
     col = st.columns([1, 1.2, 1])[1]
     with col:
         with st.form("login_form"):
-            username = st.text_input("Username", placeholder="e.g. rlyn")
+            username = st.text_input("Username", placeholder="e.g. vblues")
             password = st.text_input("Password", type="password")
             submitted = st.form_submit_button("Sign in", use_container_width=True, type="primary")
 
@@ -452,10 +452,22 @@ with tab2:
 with tab3:
     st.subheader("Toronto Season Stats")
 
+    vs_opp = st.toggle(f"vs {opponent} only", value=False, key="trend_vs_opp")
+
     if gamelog.empty:
         st.info("Game log data not loaded.")
     else:
-        mom = momentum_score(gamelog, TORONTO)
+        if vs_opp:
+            trend_log = gamelog[
+                (gamelog["team"] == TORONTO) & (gamelog["opponent"] == opponent)
+            ]
+            if trend_log.empty:
+                st.info(f"No game log data for Toronto vs {opponent}.")
+                st.stop()
+        else:
+            trend_log = gamelog
+
+        mom = momentum_score(trend_log, TORONTO)
         m1, m2, m3 = st.columns(3)
         m1.metric("Momentum Score", f"{mom['score']} / 100")
         m2.metric("Current Form", mom["label"])
@@ -473,7 +485,7 @@ with tab3:
             fig_mom.update_xaxes(tickangle=30)
             st.plotly_chart(fig_mom, use_container_width=True)
 
-        trend = season_trend(gamelog, TORONTO)
+        trend = season_trend(trend_log, TORONTO)
         if not trend.empty:
             trend["label"] = trend["game_num"].astype(str) + ". " + trend["opponent"] + " (" + trend["result"] + ")"
             fig2 = px.line(
@@ -497,7 +509,7 @@ with tab3:
         st.markdown("---")
         st.markdown("#### Toronto Win Condition Fingerprint")
         st.caption("What's different in wins vs losses")
-        wcf = win_condition_fingerprint(gamelog, TORONTO)
+        wcf = win_condition_fingerprint(trend_log, TORONTO)
         if wcf.empty:
             st.info("Not enough wins and losses to compare yet.")
         else:
