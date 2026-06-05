@@ -730,6 +730,149 @@ with tab5:
         st.markdown("---")
 
         # ══════════════════════════════════════════════════════════════════════
+        # FIELD MAP
+        # ══════════════════════════════════════════════════════════════════════
+        with st.expander("🏟️ Field Map", expanded=True):
+            st.caption("Where on the field they run and pass. Circle = Run, Diamond = Pass. Bigger = more yards gained.")
+
+            fm_col1, fm_col2 = st.columns([3, 1])
+            with fm_col2:
+                fm_type = st.radio("View", ["Plays", "Density"], key="fm_type", horizontal=False)
+                fm_filter = st.radio("Show", ["All", "Runs only", "Passes only"], key="fm_filter")
+
+            field_df = filtered[filtered["yard_line"].notna()].copy()
+            if fm_filter == "Runs only":
+                field_df = field_df[field_df["play_category"] == "Run"]
+            elif fm_filter == "Passes only":
+                field_df = field_df[field_df["play_category"] == "Pass"]
+
+            import numpy as np
+
+            # Y position: hash > direction > jitter
+            def _y_pos(row):
+                h = str(row.get("hash", ""))
+                if h == "Left":   return 1.2 + np.random.uniform(-0.25, 0.25)
+                if h == "Right":  return 3.8 + np.random.uniform(-0.25, 0.25)
+                if h == "Middle": return 2.5 + np.random.uniform(-0.25, 0.25)
+                d = str(row.get("direction", ""))
+                if "Strong" in d: return 3.5 + np.random.uniform(-0.4, 0.4)
+                if "Weak"   in d: return 1.5 + np.random.uniform(-0.4, 0.4)
+                return 2.5 + np.random.uniform(-0.6, 0.6)
+
+            np.random.seed(42)
+            if not field_df.empty:
+                field_df["_y"] = field_df.apply(_y_pos, axis=1)
+                field_df["_size"] = (field_df["gain"].fillna(0).abs().clip(0, 20) + 4)
+
+            with fm_col1:
+                if field_df.empty or "yard_line" not in field_df.columns:
+                    st.info("Need Yard_Line data to show field map.")
+                elif fm_type == "Density":
+                    fig_fm = go.Figure()
+                    # Field background
+                    fig_fm.add_shape(type="rect", x0=1, x1=99, y0=0, y1=5,
+                                     fillcolor="#2d5a1b", line=dict(color="white", width=2), layer="below")
+                    for yl in range(10, 100, 10):
+                        fig_fm.add_shape(type="line", x0=yl, x1=yl, y0=0, y1=5,
+                                         line=dict(color="rgba(255,255,255,0.4)", width=1))
+                    # Red zone
+                    fig_fm.add_shape(type="rect", x0=90, x1=99, y0=0, y1=5,
+                                     fillcolor="rgba(200,16,46,0.25)", line=dict(color="#C8102E", width=1))
+                    # Hash lines
+                    for yh in [1.5, 3.5]:
+                        fig_fm.add_shape(type="line", x0=1, x1=99, y0=yh, y1=yh,
+                                         line=dict(color="rgba(255,255,255,0.3)", width=1, dash="dot"))
+
+                    color_map = {"Run": UFT_RED, "Pass": UFT_BLUE}
+                    for cat, grp in field_df.groupby("play_category"):
+                        fig_fm.add_trace(go.Histogram2dContour(
+                            x=grp["yard_line"], y=grp["_y"],
+                            colorscale=[[0, "rgba(0,0,0,0)"],
+                                        [1, UFT_RED if cat == "Run" else UFT_BLUE]],
+                            showscale=False, name=cat,
+                            contours=dict(showlines=False),
+                            opacity=0.6,
+                        ))
+                    fig_fm.update_layout(
+                        height=300, margin=dict(l=10, r=10, t=10, b=30),
+                        xaxis=dict(range=[0, 100], showgrid=False, zeroline=False,
+                                   tickvals=list(range(10, 100, 10)), title="Yard Line"),
+                        yaxis=dict(range=[-0.2, 5.2], showgrid=False, zeroline=False,
+                                   tickvals=[1.2, 2.5, 3.8], ticktext=["Left", "Middle", "Right"]),
+                        plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                        legend=dict(orientation="h", y=1.08),
+                    )
+                    st.plotly_chart(fig_fm, use_container_width=True)
+                else:
+                    # Scatter on field
+                    fig_fm = go.Figure()
+                    # Field background
+                    fig_fm.add_shape(type="rect", x0=1, x1=99, y0=0, y1=5,
+                                     fillcolor="#2d5a1b", line=dict(color="white", width=2), layer="below")
+                    for yl in range(10, 100, 10):
+                        fig_fm.add_shape(type="line", x0=yl, x1=yl, y0=0, y1=5,
+                                         line=dict(color="rgba(255,255,255,0.4)", width=1))
+                        fig_fm.add_annotation(x=yl, y=0.15, text=str(yl),
+                                              font=dict(color="white", size=9), showarrow=False)
+                    # Red zone
+                    fig_fm.add_shape(type="rect", x0=90, x1=99, y0=0, y1=5,
+                                     fillcolor="rgba(200,16,46,0.2)", line=dict(color="#C8102E", width=1))
+                    fig_fm.add_annotation(x=94.5, y=4.7, text="Red Zone",
+                                          font=dict(color="#ffaaaa", size=9), showarrow=False)
+                    # Hash lines
+                    for yh in [1.5, 3.5]:
+                        fig_fm.add_shape(type="line", x0=1, x1=99, y0=yh, y1=yh,
+                                         line=dict(color="rgba(255,255,255,0.3)", width=1, dash="dot"))
+
+                    runs_f  = field_df[field_df["play_category"] == "Run"]
+                    passes_f = field_df[field_df["play_category"] == "Pass"]
+
+                    if not runs_f.empty:
+                        fig_fm.add_trace(go.Scatter(
+                            x=runs_f["yard_line"], y=runs_f["_y"],
+                            mode="markers",
+                            marker=dict(color=UFT_RED, size=runs_f["_size"],
+                                        opacity=0.75, line=dict(color="white", width=0.5),
+                                        symbol="circle"),
+                            name="Run",
+                            hovertemplate=(
+                                "<b>Run</b><br>Yard Line: %{x}<br>"
+                                "Gain: %{customdata[0]} yds<br>"
+                                "Formation: %{customdata[1]}<br>"
+                                "Direction: %{customdata[2]}<extra></extra>"
+                            ),
+                            customdata=runs_f[["gain", "formation", "direction"]].fillna("").values,
+                        ))
+                    if not passes_f.empty:
+                        fig_fm.add_trace(go.Scatter(
+                            x=passes_f["yard_line"], y=passes_f["_y"],
+                            mode="markers",
+                            marker=dict(color=UFT_BLUE, size=passes_f["_size"],
+                                        opacity=0.75, line=dict(color="white", width=0.5),
+                                        symbol="diamond"),
+                            name="Pass",
+                            hovertemplate=(
+                                "<b>Pass</b><br>Yard Line: %{x}<br>"
+                                "Gain: %{customdata[0]} yds<br>"
+                                "Depth: %{customdata[1]}<br>"
+                                "Formation: %{customdata[2]}<extra></extra>"
+                            ),
+                            customdata=passes_f[["gain", "pass_depth", "formation"]].fillna("").values,
+                        ))
+
+                    fig_fm.update_layout(
+                        height=300, margin=dict(l=10, r=10, t=10, b=30),
+                        xaxis=dict(range=[0, 100], showgrid=False, zeroline=False,
+                                   tickvals=list(range(10, 100, 10)), title="Yard Line (from own end zone)"),
+                        yaxis=dict(range=[-0.2, 5.2], showgrid=False, zeroline=False,
+                                   tickvals=[1.2, 2.5, 3.8], ticktext=["Left", "Middle", "Right"],
+                                   title=""),
+                        plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                        legend=dict(orientation="h", y=1.08),
+                    )
+                    st.plotly_chart(fig_fm, use_container_width=True)
+
+        # ══════════════════════════════════════════════════════════════════════
         # SECTION 1: RUN GAME
         # ══════════════════════════════════════════════════════════════════════
         with st.expander("🏃 Run Game", expanded=True):
