@@ -104,10 +104,10 @@ def _send_access_request(req_name: str, req_email: str, req_note: str) -> bool:
 
 @st.dialog("Request Access")
 def _request_access_dialog():
-    st.markdown("Fill out the form below and Marina will review your request.")
-    req_name  = st.text_input("Your name")
-    req_email = st.text_input("Your email")
-    req_note  = st.text_area("Note (optional)", placeholder="e.g. Varsity Blues coaching staff")
+    st.markdown("Fill out the form below and the admin will review your request.")
+    req_name  = st.text_input("Full Name")
+    req_email = st.text_input("Email (preferably UofT domain)")
+    req_note  = st.text_area("Note (Optional)", placeholder="e.g. Varsity Blues coaching staff")
 
     if st.button("Send Request", type="primary", use_container_width=True):
         if not req_name or not req_email:
