@@ -119,7 +119,7 @@ def _request_access_dialog():
             else:
                 st.warning(
                     "Could not send automatically. "
-                    "Email marina.mendietarr@gmail.com directly to request access."
+                    "Email m.mendieta@mail.utoronto.ca directly to request access."
                 )
 
 
