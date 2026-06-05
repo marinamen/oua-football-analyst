@@ -40,6 +40,8 @@ from analysis.scouting import (
     win_condition_fingerprint, how_to_beat, momentum_score, matchup_exploiter
 )
 import datetime
+import smtplib
+from email.mime.text import MIMEText
 
 TORONTO = "Toronto"
 UFT_BLUE  = "#003E7E"
@@ -76,6 +78,53 @@ def _check_credentials(username: str, password: str) -> str | None:
     except Exception:
         return None
 
+def _send_access_request(req_name: str, req_email: str, req_note: str) -> bool:
+    """Send access request email via Gmail SMTP."""
+    try:
+        sender   = st.secrets["email"]["sender"]
+        app_pass = st.secrets["email"]["app_password"]
+        to       = "marina.mendietarr@gmail.com"
+
+        body = (
+            f"New access request for Varsity Blues Football Analytics\n\n"
+            f"Name:  {req_name}\n"
+            f"Email: {req_email}\n"
+            f"Note:  {req_note or 'None'}\n"
+        )
+        msg = MIMEText(body)
+        msg["Subject"] = f"Access Request: {req_name}"
+        msg["From"]    = sender
+        msg["To"]      = to
+
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+            server.login(sender, app_pass)
+            server.sendmail(sender, to, msg.as_string())
+        return True
+    except Exception:
+        return False
+
+
+@st.dialog("Request Access")
+def _request_access_dialog():
+    st.markdown("Fill out the form below and Marina will review your request.")
+    req_name  = st.text_input("Your name")
+    req_email = st.text_input("Your email")
+    req_note  = st.text_area("Note (optional)", placeholder="e.g. Varsity Blues coaching staff")
+
+    if st.button("Send Request", type="primary", use_container_width=True):
+        if not req_name or not req_email:
+            st.error("Name and email are required.")
+        else:
+            ok = _send_access_request(req_name, req_email, req_note)
+            if ok:
+                st.success("Request sent! You'll hear back soon.")
+            else:
+                st.warning(
+                    "Could not send automatically. "
+                    "Email marina.mendietarr@gmail.com directly to request access."
+                )
+
+
 def _show_login_wall():
     st.markdown(
         "<h2 style='text-align:center;margin-top:3rem'>🏈 Varsity Blues Football Analytics</h2>"
@@ -98,6 +147,10 @@ def _show_login_wall():
                 st.rerun()
             else:
                 st.error("Incorrect username or password.")
+
+        st.markdown("<br>", unsafe_allow_html=True)
+        if st.button("Request Access", use_container_width=True):
+            _request_access_dialog()
 
 SESSION_EXPIRY = 60 * 60 * 24 * 7  # 7 days
 
