@@ -1,7 +1,5 @@
 """
-Varsity Blues Football Analytics
-Built for the University of Toronto football program.
-Run with: streamlit run streamlit_app.py
+Varsity Blues Football Analytics. Built for the University of Toronto football program.
 """
 
 from pathlib import Path
