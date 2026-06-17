@@ -6,8 +6,6 @@ Ingests a tagged play-by-play Excel/CSV and answers:
   - What are their run tendencies by direction and field zone?
   - What are their pass tendencies by depth and coverage situation?
   - What is their success rate and efficiency by play type / formation?
-    - How does game situation (leading/trailing) shape their play-calling?
-
 """
 
 import pandas as pd
