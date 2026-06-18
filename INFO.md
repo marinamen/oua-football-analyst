@@ -1,4 +1,4 @@
-# Varsity Blues Football Analytics — Project Instructions
+# Varsity Blues Football Analytics Project Instructions
 
 ## Git
 - **Never commit or push automatically.** Make code changes, then stop.
