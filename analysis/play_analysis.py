@@ -585,6 +585,8 @@ def explosive_plays(df: pd.DataFrame, run_threshold: int = 10, pass_threshold: i
     return pd.DataFrame(rows)
 
 """
+
+GENERAL INFO NEEDED
 Play-level situational analysis engine.
 Ingests a tagged play-by-play Excel/CSV and answers:
   - What does a team do on a given down & distance?
