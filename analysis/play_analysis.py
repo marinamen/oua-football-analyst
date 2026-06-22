@@ -583,3 +583,15 @@ def explosive_plays(df: pd.DataFrame, run_threshold: int = 10, pass_threshold: i
             "top_direction":  top_dir if cat == "Run" else top_dep,
         })
     return pd.DataFrame(rows)
+
+"""
+Play-level situational analysis engine.
+Ingests a tagged play-by-play Excel/CSV and answers:
+  - What does a team do on a given down & distance?
+  - What formations/personnel do they favour in each situation?
+  - What are their run tendencies by direction and field zone?
+  - What are their pass tendencies by depth and coverage situation?
+  - What is their success rate and efficiency by play type/formation?
+  - How does game situation (leading/trailing) shape their play-calling?
+
+"""
