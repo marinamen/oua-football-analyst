@@ -3,11 +3,7 @@
 import pandas as pd
 import numpy as np
 
-
-# ── Column normalization ───────────────────────────────────────────────────────
-
 REQUIRED_COLS = {"down", "distance", "play_type"}
-
 COL_ALIASES = {
     # down
     "dn": "down", "dwn": "down",
